@@ -1,0 +1,37 @@
+name: nju_schedule_calendar
+
+description: Flutter app for importing Nanjing University schedules into the device calendar using official web login.
+publish_to: 'none'
+version: 1.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  cookie_jar: ^4.0.9
+  crypto: ^3.0.6
+  device_calendar_plus: ^0.3.4
+  dio: ^5.9.1
+  dio_cookie_manager: ^3.3.0
+  flutter_secure_storage: ^10.0.0
+  html: ^0.15.6
+  webview_cookie_manager_flutter: ^3.0.1
+  webview_flutter: ^4.13.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true

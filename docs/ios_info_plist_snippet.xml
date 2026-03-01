@@ -1,0 +1,6 @@
+<key>NSCalendarsUsageDescription</key>
+<string>导入南京大学课表到系统日历需要读取与写入权限。</string>
+<key>NSCalendarsFullAccessUsageDescription</key>
+<string>需要完整访问系统日历，以便覆盖更新此前导入的课表事件。</string>
+<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+<string>允许应用把南京大学课表写入系统日历。</string>
