@@ -155,7 +155,10 @@ class NjuScheduleService {
     final currentSemester = eligible.last;
     final semesterId = '${currentSemester['XNXQDM']}';
     final semesterName = '${currentSemester['XNXQDM_DISPLAY'] ?? semesterId}';
-    final semesterStart = _parseDateTime('${currentSemester['KBKFRQ']}');
+    final rawSemesterAnchor = _parseDateTime('${currentSemester['KBKFRQ']}');
+    // 研究生接口中的 KBKFRQ 更像“课表开放/锚点日期”，不一定正好是周一。
+    // 先归一化到该周周一，再叠加 XQ(周几) 与 ZCBH(周次)，避免整体 weekday 固定偏移。
+    final semesterStart = _normalizeWeekAnchorToMonday(rawSemesterAnchor);
 
     final coursesResp = await dio.post<dynamic>(
       'https://ehallapp.nju.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/xspkjgcx.do',
@@ -581,6 +584,11 @@ class NjuScheduleService {
 
   DateTime _parseDateTime(String text) {
     return DateTime.parse(text.replaceFirst(' ', 'T'));
+  }
+
+  DateTime _normalizeWeekAnchorToMonday(DateTime anchor) {
+    final dateOnly = DateTime(anchor.year, anchor.month, anchor.day);
+    return dateOnly.subtract(Duration(days: anchor.weekday - DateTime.monday));
   }
 
   (int, int) _hhmmToHourMinute(int value) {
