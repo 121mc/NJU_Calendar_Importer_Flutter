@@ -412,7 +412,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Text('1. 本项目旨在提供一个南京大学课表导入手机日历解决方案，供有需求的同学参考使用。'),
             Text('2. 本项目完全免费开源，且不包含任何广告或内购；使用过程中也不会收集任何个人数据。'),
             Text('3. 本项目100%由ChatGPT-5.2编写，如有问题敬请谅解。'),
-            Text('4. 本项目由 mc_121 维护，欢迎提出建议和问题。'),
+            Text('4. 本项目由 mc_121 维护，邮箱 mc_121_@outlook.com'),
           ],
         ),
       ),
