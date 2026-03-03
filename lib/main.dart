@@ -21,7 +21,7 @@ class NjuScheduleCalendarApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '南大课表导入日历',
+      title: 'NJU课表导入日历',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5E35B1)),
@@ -137,7 +137,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               title: const Text('隐私政策与用户说明'),
               content: const SingleChildScrollView(
                 child: Text(
-                  '欢迎使用“南大课表导入日历”。\n\n'
+                  '欢迎使用“NJU课表导入”。\n\n'
                   '在你使用本应用前，请先阅读并同意《隐私政策》。本应用主要提供南京大学课表导入系统日历功能。为实现该功能，本应用会在你主动操作时访问南京大学官方登录页面，并在获得你授权后申请日历权限，以便读取系统日历列表、写入课表事件以及清理本应用此前导入的数据。\n\n'
                   '本应用不包含广告、不包含内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。相关数据仅在你的设备本地处理，并仅在访问南京大学官方系统时与学校服务器通信。',
                 ),
@@ -482,7 +482,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('南大课表导入日历'),
+        title: const Text('NJU课表导入'),
         actions: [
           IconButton(
             tooltip: '隐私政策',
@@ -906,7 +906,7 @@ class PrivacyPolicyPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
               Text(
-                '南大课表导入日历隐私政策',
+                'NJU课表导入隐私政策',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               SizedBox(height: 12),
