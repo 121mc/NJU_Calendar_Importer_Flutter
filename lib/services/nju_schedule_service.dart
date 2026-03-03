@@ -510,7 +510,7 @@ class NjuScheduleService {
           title: title,
           start: start,
           end: end,
-          location: location,
+          location: '$campus $location',
           description: description,
           importKey: importKey,
         ),
@@ -531,6 +531,17 @@ class NjuScheduleService {
     return sha1.convert(utf8.encode(raw)).toString();
   }
 
+  String? _sanitizeTeacher(String? teacher) {
+    if (teacher == null) return null;
+
+    var text = teacher.trim();
+    if (text.isEmpty) return null;
+    text = text.replaceAll(RegExp(r'1\d{10}'), '');
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.isEmpty) return null;
+    return text;
+  }
+
   String _buildDescription({
     required String importKey,
     required String schoolLabel,
@@ -539,11 +550,14 @@ class NjuScheduleService {
     required String? campus,
     required List<String> extraLines,
   }) {
+    final sanitizedTeacher = _sanitizeTeacher(teacher);
+
     return [
       '[NJU_SCHEDULE_IMPORT]',
       'import_key=$importKey',
       '学校：$schoolLabel',
-      if (teacher != null && teacher.isNotEmpty) '教师：$teacher',
+      if (sanitizedTeacher != null && sanitizedTeacher.isNotEmpty)
+        '教师：$sanitizedTeacher',
       if (className != null && className.isNotEmpty) '班级：$className',
       if (campus != null && campus.isNotEmpty) '校区：$campus',
       ...extraLines,
