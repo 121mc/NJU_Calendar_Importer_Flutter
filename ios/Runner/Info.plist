@@ -33,7 +33,7 @@
 	<key>NSCalendarsUsageDescription</key>
 	<string>我们需要日历权限来为您导入南大课表</string>
 	<key>NSContactsUsageDescription</key>
-	<string>日历功能需要关联的联系人权限支持。</string>
+	<string>日历功能需要关联的联系人权限支持</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
