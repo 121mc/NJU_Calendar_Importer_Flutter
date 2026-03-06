@@ -1,14 +1,14 @@
-# NJU课表导入
+# NJU课表导入 for Android and iOS
 
 一个基于 Flutter 开发的南京大学课表导入工具。
 
 本项目通过南京大学官方统一认证网页完成登录，自动拉取当前学期课表，并将课程与考试事件写入手机系统日历，方便在原生日历中统一查看和管理。
 
-目前该项目支持 Android 平台，在未来会支持 iOS 平台。
+基于 ArkTS 开发的 HarmonyOS 应用https://github.com/121mc/NJU_Calendar_Importer_ArkTS
 
-基于ArkTS开发的鸿蒙版应用https://github.com/121mc/NJU_Calendar_Importer_ArkTS
+Android 下载链接https://box.nju.edu.cn/d/adf190c64ece4373bf43/
 
-安卓下载链接https://box.nju.edu.cn/d/adf190c64ece4373bf43/
+iOS 下载方式：在 APP Store 搜索 NJU课表导入
 
 ## 项目说明
 
