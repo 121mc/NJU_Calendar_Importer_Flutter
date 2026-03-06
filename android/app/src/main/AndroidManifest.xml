@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 
     <application
-        android:label="NJU课表导入"
+        android:label="呢喃课表导入"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

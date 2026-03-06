@@ -5,9 +5,9 @@ enum SchoolType {
   String get label {
     switch (this) {
       case SchoolType.undergrad:
-        return '南京大学本科生';
+        return '本科生';
       case SchoolType.graduate:
-        return '南京大学研究生';
+        return '研究生';
     }
   }
 

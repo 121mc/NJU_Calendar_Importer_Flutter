@@ -21,7 +21,7 @@ class NjuScheduleCalendarApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NJU课表导入日历',
+      title: '呢喃课表导入',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5E35B1)),
@@ -137,9 +137,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               title: const Text('隐私政策与用户说明'),
               content: const SingleChildScrollView(
                 child: Text(
-                  '欢迎使用“NJU课表导入”。\n\n'
-                  '在你使用本应用前，请先阅读并同意《隐私政策》。本应用主要提供南京大学课表导入系统日历功能。为实现该功能，本应用会在你主动操作时访问南京大学官方登录页面，并在获得你授权后申请日历权限，以便读取系统日历列表、写入课表事件以及清理本应用此前导入的数据。\n\n'
-                  '本应用不包含广告、不包含内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。相关数据仅在你的设备本地处理，并仅在访问南京大学官方系统时与学校服务器通信。',
+                  '欢迎使用“呢喃课表导入”。\n\n'
+                  '在你使用本应用前，请先阅读并同意《隐私政策》。本应用主要提供课表导入系统日历功能。为实现该功能，本应用会在你主动操作时访问官方登录页面，并在获得你授权后申请日历权限，以便读取系统日历列表、写入课表事件以及清理本应用此前导入的数据。\n\n'
+                  '本应用不包含广告、不包含内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。相关数据仅在你的设备本地处理，并仅在访问官方系统时与学校服务器通信。',
                 ),
               ),
               actions: [
@@ -482,7 +482,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('NJU课表导入'),
+        title: const Text('呢喃课表导入'),
         actions: [
           IconButton(
             tooltip: '隐私政策',
@@ -574,10 +574,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             SizedBox(height: 8),
-            Text('1. 本项目旨在提供一个南京大学课表导入手机日历解决方案，供有需求的同学参考使用。'),
+            Text('1. 本项目旨在提供一个课表导入手机日历解决方案，供有需求的同学参考使用。'),
             Text('2. 本项目完全免费开源，且不包含任何广告或内购；使用过程中也不会将课表数据上传到开发者自建服务器。'),
-            Text('3. 本应用仅在你主动使用相关功能时访问南京大学官方系统，并在获得授权后申请日历权限。'),
+            Text('3. 本应用仅在你主动使用相关功能时访问官方系统，并在获得授权后申请日历权限。'),
             Text('4. 本项目由 mc_121 维护，邮箱 mc_121_@outlook.com。'),
+            Text('5. 本项目是个人开发项目，与位于江苏省南京市的任何大学均无关。'),
           ],
         ),
       ),
@@ -639,7 +640,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             Text(
-              '说明：点击后会在应用内打开南京大学官方登录页面；完成统一认证后自动返回。',
+              '说明：点击后会在应用内打开官方登录页面；完成统一认证后自动返回。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -906,7 +907,7 @@ class PrivacyPolicyPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
               Text(
-                'NJU课表导入隐私政策',
+                '呢喃课表导入隐私政策',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               SizedBox(height: 12),
@@ -917,7 +918,8 @@ class PrivacyPolicyPage extends StatelessWidget {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
               SizedBox(height: 8),
-              Text('本应用用于帮助南京大学学生将课表与考试信息导入手机系统日历。本应用不提供社交、广告、支付或个性化推荐功能。'),
+              Text('本应用用于帮助呢喃学生将课表与考试信息导入手机系统日历。本应用不提供社交、广告、支付或个性化推荐功能。'),
+              Text('本项目是个人开发项目，与位于江苏省南京市的任何大学均无关。'),
               SizedBox(height: 16),
               Text(
                 '2. 我们处理的信息',
@@ -925,8 +927,8 @@ class PrivacyPolicyPage extends StatelessWidget {
               ),
               SizedBox(height: 8),
               Text('为了实现课表导入功能，本应用可能在你主动操作时处理以下信息：'),
-              Text('• 你在南京大学官方统一认证页面输入并完成认证所需的信息。'),
-              Text('• 从南京大学官方系统返回的课表、考试、上课地点、教师等信息。'),
+              Text('• 你在官方统一认证页面输入并完成认证所需的信息。'),
+              Text('• 从官方系统返回的课表、考试、上课地点、教师等信息。'),
               Text('• 你授权后可访问的系统日历列表与本应用写入的日历事件。'),
               SizedBox(height: 16),
               Text(
@@ -945,7 +947,7 @@ class PrivacyPolicyPage extends StatelessWidget {
               ),
               SizedBox(height: 8),
               Text('本应用不会将你的课表、日历内容或账号信息上传到开发者自建服务器。'),
-              Text('本应用仅在你使用登录和课表拉取功能时，与南京大学官方系统进行网络通信。'),
+              Text('本应用仅在你使用登录和课表拉取功能时，与官方系统进行网络通信。'),
               Text('必要的登录态、设置项或功能状态仅保存在你的设备本地，用于保证功能正常运行。'),
               SizedBox(height: 16),
               Text(
@@ -953,7 +955,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
               SizedBox(height: 8),
-              Text('本应用依赖设备系统提供的日历能力，并通过应用内网页访问南京大学官方认证与课表系统。'),
+              Text('本应用依赖设备系统提供的日历能力，并通过应用内网页访问官方认证与课表系统。'),
               SizedBox(height: 16),
               Text(
                 '6. 你的权利',

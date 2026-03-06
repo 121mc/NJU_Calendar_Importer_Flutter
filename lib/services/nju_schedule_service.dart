@@ -385,7 +385,7 @@ class NjuScheduleService {
       );
       final description = _buildDescription(
         importKey: importKey,
-        schoolLabel: '南京大学本科生',
+        schoolLabel: '本科生',
         teacher: teacher,
         className: className,
         campus: campus,
@@ -447,7 +447,7 @@ class NjuScheduleService {
       importKey: importKey,
       description: _buildDescription(
         importKey: importKey,
-        schoolLabel: '南京大学本科生',
+        schoolLabel: '本科生',
         teacher: teacher,
         className: null,
         campus: null,
@@ -497,7 +497,7 @@ class NjuScheduleService {
       );
       final description = _buildDescription(
         importKey: importKey,
-        schoolLabel: '南京大学研究生',
+        schoolLabel: '研究生',
         teacher: teacher,
         className: _stringOrNull(row['BJMC']),
         campus: campus,
