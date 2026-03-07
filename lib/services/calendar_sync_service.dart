@@ -58,8 +58,19 @@ class CalendarSyncService {
       for (final event in oldEvents) {
         final description = event.description ?? '';
         if (description.contains(importMarker)) {
-          await DeviceCalendar.instance.deleteEvent(eventId: event.instanceId);
-          deleted += 1;
+          String? targetId = event.eventId;
+          if (targetId == null || targetId.isEmpty) {
+            targetId = event.instanceId;
+          }
+
+          if (targetId != null && targetId.isNotEmpty) {
+            try {
+              await DeviceCalendar.instance.deleteEvent(eventId: targetId);
+              deleted += 1;
+            } catch (_) {
+              // 静默忽略单个日程删除失败的情况
+            }
+          }
         }
       }
     } else if (overwritePreviousImports &&
@@ -106,22 +117,43 @@ class CalendarSyncService {
     }
 
     final now = DateTime.now();
-    final rangeStart = DateTime(now.year - 5, 1, 1);
-    final rangeEnd = DateTime(now.year + 5, 12, 31, 23, 59, 59);
-
-    final events = await DeviceCalendar.instance.listEvents(
-      rangeStart,
-      rangeEnd,
-      calendarIds: [calendarId],
-    );
-
     var deleted = 0;
-    for (final event in events) {
-      final description = event.description ?? '';
-      if (!description.contains(importMarker)) continue;
 
-      await DeviceCalendar.instance.deleteEvent(eventId: event.instanceId);
-      deleted += 1;
+    for (int i = -2; i <= 2; i++) {
+      final year = now.year + i;
+      final rangeStart = DateTime(year, 1, 1);
+      final rangeEnd = DateTime(year, 12, 31, 23, 59, 59);
+
+      try {
+        final events = await DeviceCalendar.instance.listEvents(
+          rangeStart,
+          rangeEnd,
+          calendarIds: [calendarId],
+        );
+
+        for (final event in events) {
+          final description = event.description ?? '';
+          if (!description.contains(importMarker)) continue;
+
+          String? targetId = event.eventId;
+          if (targetId == null || targetId.isEmpty) {
+            targetId = event.instanceId;
+          }
+
+          if (targetId == null || targetId.isEmpty) {
+            continue;
+          }
+
+          try {
+            await DeviceCalendar.instance.deleteEvent(eventId: targetId);
+            deleted += 1;
+          } catch (_) {
+            // 静默忽略单个日程删除失败的情况
+          }
+        }
+      } catch (_) {
+        // 静默忽略某一年份查询失败的情况
+      }
     }
 
     return deleted;
