@@ -43,7 +43,8 @@ class _IntroCardState extends State<IntroCard> {
   }
 
   Future<void> _launchWebUrl() async {
-    final Uri url = Uri.parse('https://flutter.dev');
+    final Uri url =
+        Uri.parse('https://github.com/121mc/NJU_Calendar_Importer_Flutter');
 
     if (!await canLaunchUrl(url)) {
       if (!mounted) return;

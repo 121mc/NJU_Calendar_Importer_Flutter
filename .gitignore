@@ -11,3 +11,5 @@ android/key.properties
 android/app/upload-keystore.jks
 android/app/*.jks
 android/app/*.keystore
+release/
+release.md
