@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'privacy_policy_page.dart';
+import '../pages/privacy_policy_page.dart';
 
 class IntroCard extends StatefulWidget {
   const IntroCard({super.key});

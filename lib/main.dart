@@ -2,8 +2,8 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nju_calendar_importer_flutter/utils/intro_card.dart';
-import 'package:nju_calendar_importer_flutter/utils/prompted_instruction_button.dart';
-import 'package:nju_calendar_importer_flutter/utils/privacy_policy_page.dart';
+import 'package:nju_calendar_importer_flutter/pages/privacy_policy_page.dart';
+import 'package:nju_calendar_importer_flutter/pages/sentinel_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/login_models.dart';
@@ -138,6 +138,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           barrierDismissible: false,
           builder: (dialogContext) {
             return AlertDialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
               title: const Text('隐私政策与用户说明'),
               content: SingleChildScrollView(
                 child: IntroCard(),
@@ -467,374 +471,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('呢喃课表导入'),
-        actions: [
-          IconButton(
-            tooltip: '隐私政策',
-            onPressed: _openPrivacyPolicyPage,
-            icon: const Icon(Icons.privacy_tip_outlined),
-          ),
-        ],
-      ),
-      body: !_privacyReady
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: SafeArea(
-                    child: ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        const SizedBox(height: 12),
-                        if (_session == null)
-                          _buildLoginCard()
-                        else
-                          _buildSessionCard(),
-                        if (_session != null) ...[
-                          const SizedBox(height: 12),
-                          _buildFetchCard(),
-                        ],
-                        if (_bundle != null) ...[
-                          const SizedBox(height: 12),
-                          _buildScheduleCard(),
-                          const SizedBox(height: 12),
-                          _buildCalendarCard(),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 20),
-                    child: PromptedInstructionButton(),
-                  ),
-                )
-              ],
-            ),
+    return SentinelPage(
+      privacyReady: _privacyReady,
+      onOpenPrivacyPolicy: _openPrivacyPolicyPage,
+      usernameHintController: _usernameHintController,
+      schoolType: _schoolType,
+      onSchoolTypeChanged: (value) {
+        setState(() {
+          _schoolType = value;
+        });
+      },
+      loggingIn: _loggingIn,
+      onOpenWebLogin: _openWebLogin,
+      session: _session,
+      onLogout: _logout,
+      includeFinalExams: _includeFinalExams,
+      onIncludeFinalExamsChanged: (value) {
+        setState(() {
+          _includeFinalExams = value;
+        });
+      },
+      loadingSchedule: _loadingSchedule,
+      onLoadSchedule: _loadSchedule,
+      bundle: _bundle,
+      calendars: _calendars,
+      selectedCalendarId: _selectedCalendarId,
+      loadingCalendars: _loadingCalendars,
+      onLoadCalendars: _loadCalendars,
+      onCalendarChanged: (value) {
+        setState(() {
+          _selectedCalendarId = value;
+        });
+      },
+      overwritePreviousImports: _overwritePreviousImports,
+      onOverwritePreviousImportsChanged: (value) {
+        setState(() {
+          _overwritePreviousImports = value;
+        });
+      },
+      syncingCalendar: _syncingCalendar,
+      onSyncToCalendar: _syncToCalendar,
+      deletingImportedEvents: _deletingImportedEvents,
+      onDeleteImportedEvents: _deleteImportedEvents,
     );
-  }
-
-  Widget _buildLoginCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              '网页登录统一认证',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 22),
-            const Text(
-              ' 账号备注:',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-            Align(
-              alignment: Alignment.center,
-              child: SizedBox(
-                width: 330,
-                child: TextField(
-                  controller: _usernameHintController,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 6,
-            ),
-            SegmentedButton<SchoolType>(
-              segments: const [
-                ButtonSegment(
-                  value: SchoolType.undergrad,
-                  label: Text('本科生'),
-                  icon: Icon(Icons.school),
-                ),
-                ButtonSegment(
-                  value: SchoolType.graduate,
-                  label: Text('研究生'),
-                  icon: Icon(Icons.auto_stories),
-                ),
-              ],
-              selected: {_schoolType},
-              onSelectionChanged: (value) {
-                setState(() {
-                  _schoolType = value.first;
-                });
-              },
-            ),
-            FilledButton.icon(
-              onPressed: _loggingIn ? null : _openWebLogin,
-              icon: _loggingIn
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.language),
-              label: const Text('打开官方登录页'),
-            ),
-            const SizedBox(height: 8),
-            Text("说明：\n账号备注可选,只用于本地显示。\n真正登录将在官方网页中完成。",
-                style: Theme.of(context).textTheme.bodySmall),
-            Text(
-              '点击后会在应用内打开官方登录页面。\n完成统一认证后自动返回。',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSessionCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '当前登录态',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text('账号备注：${_session!.username}'),
-            Text('身份：${_session!.schoolType.label}'),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _logout,
-                    icon: const Icon(Icons.logout),
-                    label: const Text('退出并清空登录态'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFetchCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '拉取课表',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            if (_session!.schoolType.supportsFinalExams)
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _includeFinalExams,
-                onChanged: (value) {
-                  setState(() {
-                    _includeFinalExams = value;
-                  });
-                },
-                title: const Text('本科课表同时导入期末考试'),
-              ),
-            FilledButton.icon(
-              onPressed: _loadingSchedule ? null : _loadSchedule,
-              icon: _loadingSchedule
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.download),
-              label: const Text('拉取当前学期课表'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildScheduleCard() {
-    final bundle = _bundle!;
-    final preview = bundle.events.take(8).toList();
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '课表预览',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text('学期：${bundle.semesterName}'),
-            Text('课程条目：${bundle.courseCount}'),
-            Text('考试条目：${bundle.examCount}'),
-            Text('最终生成事件数：${bundle.events.length}'),
-            const SizedBox(height: 12),
-            for (final item in preview)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(_formatDateTimeRange(item.start, item.end)),
-                    if (item.location != null) Text(item.location!),
-                  ],
-                ),
-              ),
-            if (bundle.events.length > preview.length)
-              Text('其余 ${bundle.events.length - preview.length} 条事件将在同步时写入日历。'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCalendarCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '系统日历同步',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _loadingCalendars ? null : _loadCalendars,
-                    icon: _loadingCalendars
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.calendar_month),
-                    label: const Text('加载手机日历'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _selectedCalendarId,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: '选择写入目标日历',
-                border: OutlineInputBorder(),
-              ),
-              items: _calendars
-                  .map(
-                    (calendar) => DropdownMenuItem(
-                      value: calendar.id,
-                      child: Text(calendar.name),
-                    ),
-                  )
-                  .toList(),
-              onChanged: _calendars.isEmpty
-                  ? null
-                  : (value) {
-                      setState(() {
-                        _selectedCalendarId = value;
-                      });
-                    },
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _overwritePreviousImports,
-              onChanged: (value) {
-                setState(() {
-                  _overwritePreviousImports = value;
-                });
-              },
-              title: const Text('覆盖删除本应用此前导入的旧事件'),
-              subtitle: const Text('依赖读取权限；若只有写入权限则无法删除旧数据。'),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _syncingCalendar ? null : _syncToCalendar,
-                    icon: _syncingCalendar
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.event_available),
-                    label: const Text('写入系统日历'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed:
-                        (_deletingImportedEvents || _selectedCalendarId == null)
-                            ? null
-                            : _deleteImportedEvents,
-                    icon: _deletingImportedEvents
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete_sweep),
-                    label: const Text('一键清空本应用导入事件'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatDateTimeRange(DateTime start, DateTime end) {
-    final mm = start.month.toString().padLeft(2, '0');
-    final dd = start.day.toString().padLeft(2, '0');
-    final sh = start.hour.toString().padLeft(2, '0');
-    final sm = start.minute.toString().padLeft(2, '0');
-    final eh = end.hour.toString().padLeft(2, '0');
-    final em = end.minute.toString().padLeft(2, '0');
-    return '$mm-$dd $sh:$sm ~ $eh:$em';
   }
 }

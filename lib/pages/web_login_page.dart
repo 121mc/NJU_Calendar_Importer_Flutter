@@ -187,11 +187,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
             onPressed: _initializing ? null : _controller.reload,
             icon: const Icon(Icons.refresh),
           ),
-          IconButton(
-            tooltip: '完成登录',
-            onPressed: _initializing ? null : _manualComplete,
-            icon: const Icon(Icons.check_circle_outline),
-          ),
         ],
       ),
       body: Column(
