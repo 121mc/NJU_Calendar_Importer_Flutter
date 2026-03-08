@@ -1,5 +1,9 @@
 import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:nju_calendar_importer_flutter/utils/intro_card.dart';
+import 'package:nju_calendar_importer_flutter/utils/prompted_instruction_button.dart';
+import 'package:nju_calendar_importer_flutter/utils/privacy_policy_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/login_models.dart';
@@ -109,10 +113,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _privacyReady = true;
     });
 
-    if (accepted) {
-      await _continueAfterPrivacyAccepted();
-      return;
-    }
+    // if (accepted) {
+    //   await _continueAfterPrivacyAccepted();
+    //   return;
+    // }
 
     await _showPrivacyConsentDialog();
   }
@@ -135,12 +139,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           builder: (dialogContext) {
             return AlertDialog(
               title: const Text('隐私政策与用户说明'),
-              content: const SingleChildScrollView(
-                child: Text(
-                  '欢迎使用“呢喃课表导入”。\n\n'
-                  '在你使用本应用前，请先阅读并同意《隐私政策》。本应用主要提供课表导入系统日历功能。为实现该功能，本应用会在你主动操作时访问官方登录页面，并在获得你授权后申请日历权限，以便读取系统日历列表、写入课表事件以及清理本应用此前导入的数据。\n\n'
-                  '本应用不包含广告、不包含内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。相关数据仅在你的设备本地处理，并仅在访问官方系统时与学校服务器通信。',
-                ),
+              content: SingleChildScrollView(
+                child: IntroCard(),
               ),
               actions: [
                 TextButton(
@@ -148,16 +148,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     Navigator.of(dialogContext).pop(false);
                   },
                   child: const Text('暂不同意'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    await Navigator.of(dialogContext).push(
-                      MaterialPageRoute(
-                        builder: (_) => const PrivacyPolicyPage(),
-                      ),
-                    );
-                  },
-                  child: const Text('查看隐私政策'),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -178,6 +168,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _privacyAccepted = false;
       });
+      await SystemNavigator.pop();
       return;
     }
 
@@ -493,95 +484,41 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       body: !_privacyReady
           ? const Center(child: CircularProgressIndicator())
-          : !_privacyAccepted
-              ? _buildPrivacyBlockedView()
-              : SafeArea(
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      _buildIntroCard(),
-                      const SizedBox(height: 12),
-                      if (_session == null)
-                        _buildLoginCard()
-                      else
-                        _buildSessionCard(),
-                      if (_session != null) ...[
+          : Column(
+              children: [
+                Expanded(
+                  child: SafeArea(
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
                         const SizedBox(height: 12),
-                        _buildFetchCard(),
+                        if (_session == null)
+                          _buildLoginCard()
+                        else
+                          _buildSessionCard(),
+                        if (_session != null) ...[
+                          const SizedBox(height: 12),
+                          _buildFetchCard(),
+                        ],
+                        if (_bundle != null) ...[
+                          const SizedBox(height: 12),
+                          _buildScheduleCard(),
+                          const SizedBox(height: 12),
+                          _buildCalendarCard(),
+                        ],
                       ],
-                      if (_bundle != null) ...[
-                        const SizedBox(height: 12),
-                        _buildScheduleCard(),
-                        const SizedBox(height: 12),
-                        _buildCalendarCard(),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
-    );
-  }
-
-  Widget _buildPrivacyBlockedView() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.privacy_tip_outlined,
-                size: 56,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '请先阅读并同意隐私政策',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                '在你同意隐私政策前，本应用不会继续读取本地登录态，也不会申请日历权限或提供课表导入功能。',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: _showPrivacyConsentDialog,
-                icon: const Icon(Icons.rule_folder_outlined),
-                label: const Text('查看并同意隐私政策'),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _openPrivacyPolicyPage,
-                child: const Text('仅查看完整隐私政策'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIntroCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              '说明',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: PromptedInstructionButton(),
+                  ),
+                )
+              ],
             ),
-            SizedBox(height: 8),
-            Text('1. 本项目旨在提供一个课表导入手机日历解决方案，供有需求的同学参考使用。'),
-            Text('2. 本项目完全免费开源，且不包含任何广告或内购；使用过程中也不会将课表数据上传到开发者自建服务器。'),
-            Text('3. 本应用仅在你主动使用相关功能时访问官方系统，并在获得授权后申请日历权限。'),
-            Text('4. 本项目由 mc_121 维护，邮箱 mc_121_@outlook.com。'),
-            Text('5. 本项目是个人开发项目，与位于江苏省南京市的任何大学均无关。'),
-          ],
-        ),
-      ),
     );
   }
 
@@ -801,7 +738,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _selectedCalendarId,
+              initialValue: _selectedCalendarId,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: '选择写入目标日历',
@@ -810,7 +747,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               items: _calendars
                   .map(
                     (calendar) => DropdownMenuItem(
-                      value: calendar.id!,
+                      value: calendar.id,
                       child: Text(calendar.name),
                     ),
                   )
@@ -888,94 +825,5 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final eh = end.hour.toString().padLeft(2, '0');
     final em = end.minute.toString().padLeft(2, '0');
     return '$mm-$dd $sh:$sm ~ $eh:$em';
-  }
-}
-
-class PrivacyPolicyPage extends StatelessWidget {
-  const PrivacyPolicyPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('隐私政策'),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text(
-                '呢喃课表导入隐私政策',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 12),
-              Text('生效日期：2026-03-03'),
-              SizedBox(height: 16),
-              Text(
-                '1. 应用基本说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用用于帮助呢喃学生将课表与考试信息导入手机系统日历。本应用不提供社交、广告、支付或个性化推荐功能。'),
-              Text('本项目是个人开发项目，与位于江苏省南京市的任何大学均无关。'),
-              SizedBox(height: 16),
-              Text(
-                '2. 我们处理的信息',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('为了实现课表导入功能，本应用可能在你主动操作时处理以下信息：'),
-              Text('• 你在官方统一认证页面输入并完成认证所需的信息。'),
-              Text('• 从官方系统返回的课表、考试、上课地点、教师等信息。'),
-              Text('• 你授权后可访问的系统日历列表与本应用写入的日历事件。'),
-              SizedBox(height: 16),
-              Text(
-                '3. 权限使用说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用会在获得你授权后申请日历权限，用于：'),
-              Text('• 读取系统日历列表，供你选择导入目标日历；'),
-              Text('• 将课表和考试信息写入系统日历；'),
-              Text('• 删除本应用此前导入的旧事件，避免重复。'),
-              SizedBox(height: 16),
-              Text(
-                '4. 数据传输与存储',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用不会将你的课表、日历内容或账号信息上传到开发者自建服务器。'),
-              Text('本应用仅在你使用登录和课表拉取功能时，与官方系统进行网络通信。'),
-              Text('必要的登录态、设置项或功能状态仅保存在你的设备本地，用于保证功能正常运行。'),
-              SizedBox(height: 16),
-              Text(
-                '5. 第三方服务说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用依赖设备系统提供的日历能力，并通过应用内网页访问官方认证与课表系统。'),
-              SizedBox(height: 16),
-              Text(
-                '6. 你的权利',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('你可以拒绝授予日历权限，但届时将无法使用系统日历同步功能。'),
-              Text('你可以在系统设置中关闭日历权限，或在应用内清除本应用导入的日历事件。'),
-              SizedBox(height: 16),
-              Text(
-                '7. 联系方式',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('维护者：mc_121'),
-              Text('联系邮箱：mc_121_@outlook.com'),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

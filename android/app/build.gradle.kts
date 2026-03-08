@@ -3,7 +3,7 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
+    id("org.jetbrains.kotlin.android")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -11,6 +11,22 @@ val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
+val hasReleaseSigning = keystorePropertiesFile.exists() &&
+    listOf("keyAlias", "keyPassword", "storeFile", "storePassword").all { key ->
+        (keystoreProperties[key] as? String)?.isNotBlank() == true
+    }
+
+configurations.configureEach {
+    resolutionStrategy {
+        // Keep transitive AndroidX deps compatible with AGP 8.7.2.
+        force(
+            "androidx.core:core:1.16.0",
+            "androidx.core:core-ktx:1.16.0",
+            "androidx.browser:browser:1.8.0",
+        )
+    }
 }
 
 android {
@@ -36,8 +52,8 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            if (keystorePropertiesFile.exists()) {
+        if (hasReleaseSigning) {
+            create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
                 storeFile = file(keystoreProperties["storeFile"] as String)
@@ -48,7 +64,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                // Allow local release packaging when no private keystore is configured.
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }

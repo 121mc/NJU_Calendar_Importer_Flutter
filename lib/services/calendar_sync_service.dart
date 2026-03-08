@@ -59,11 +59,11 @@ class CalendarSyncService {
         final description = event.description ?? '';
         if (description.contains(importMarker)) {
           String? targetId = event.eventId;
-          if (targetId == null || targetId.isEmpty) {
+          if (targetId.isEmpty) {
             targetId = event.instanceId;
           }
 
-          if (targetId != null && targetId.isNotEmpty) {
+          if (targetId.isNotEmpty) {
             try {
               await DeviceCalendar.instance.deleteEvent(eventId: targetId);
               deleted += 1;
@@ -136,11 +136,11 @@ class CalendarSyncService {
           if (!description.contains(importMarker)) continue;
 
           String? targetId = event.eventId;
-          if (targetId == null || targetId.isEmpty) {
+          if (targetId.isEmpty) {
             targetId = event.instanceId;
           }
 
-          if (targetId == null || targetId.isEmpty) {
+          if (targetId.isEmpty) {
             continue;
           }
 
