@@ -113,10 +113,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _privacyReady = true;
     });
 
-    // if (accepted) {
-    //   await _continueAfterPrivacyAccepted();
-    //   return;
-    // }
+    if (accepted) {
+      await _continueAfterPrivacyAccepted();
+      return;
+    }
 
     await _showPrivacyConsentDialog();
   }
@@ -144,8 +144,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.of(dialogContext).pop(false);
+                  onPressed: () async {
+                    await SystemNavigator.pop();
                   },
                   child: const Text('暂不同意'),
                 ),
@@ -165,10 +165,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     if (!agreed) {
-      setState(() {
-        _privacyAccepted = false;
-      });
-      await SystemNavigator.pop();
       return;
     }
 
@@ -527,13 +523,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
               '网页登录统一认证',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 22),
+            const Text(
+              ' 账号备注:',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+            Align(
+              alignment: Alignment.center,
+              child: SizedBox(
+                width: 330,
+                child: TextField(
+                  controller: _usernameHintController,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 6,
+            ),
             SegmentedButton<SchoolType>(
               segments: const [
                 ButtonSegment(
@@ -554,16 +573,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 });
               },
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _usernameHintController,
-              decoration: const InputDecoration(
-                labelText: '账号备注（可选）',
-                helperText: '只用于本地显示；真正登录将在官方网页中完成。',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _loggingIn ? null : _openWebLogin,
               icon: _loggingIn
@@ -576,8 +585,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               label: const Text('打开官方登录页'),
             ),
             const SizedBox(height: 8),
+            Text("说明：\n账号备注可选,只用于本地显示。\n真正登录将在官方网页中完成。",
+                style: Theme.of(context).textTheme.bodySmall),
             Text(
-              '说明：点击后会在应用内打开官方登录页面；完成统一认证后自动返回。',
+              '点击后会在应用内打开官方登录页面。\n完成统一认证后自动返回。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
