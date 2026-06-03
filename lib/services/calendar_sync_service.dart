@@ -2,8 +2,39 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 
 import '../models/nju_course.dart';
 
+class CalendarOverwriteRange {
+  const CalendarOverwriteRange({
+    required this.start,
+    required this.end,
+  });
+
+  final DateTime start;
+  final DateTime end;
+}
+
 class CalendarSyncService {
   static const importMarker = '[NJU_SCHEDULE_IMPORT]';
+
+  static CalendarOverwriteRange overwriteRangeFor(ScheduleBundle bundle) {
+    final earliest = bundle.earliestStart;
+    final latest = bundle.latestEnd;
+    if (earliest == null || latest == null) {
+      throw StateError(
+          'Cannot calculate overwrite range for an empty schedule.');
+    }
+
+    final firstDay = DateTime(earliest.year, earliest.month, earliest.day);
+    final lastDay = DateTime(latest.year, latest.month, latest.day);
+    final monday = firstDay.subtract(
+      Duration(days: firstDay.weekday - DateTime.monday),
+    );
+    final nextMonday = lastDay.add(
+      Duration(days: DateTime.daysPerWeek - lastDay.weekday + 1),
+    );
+    final sundayEnd = nextMonday.subtract(const Duration(milliseconds: 1));
+
+    return CalendarOverwriteRange(start: monday, end: sundayEnd);
+  }
 
   Future<CalendarPermissionStatus> _ensurePermissions() async {
     final status = await DeviceCalendar.instance.hasPermissions();
@@ -42,28 +73,25 @@ class CalendarSyncService {
     var skipped = 0;
     String? warning;
 
-    final rangeStart = (bundle.earliestStart ?? DateTime.now())
-        .subtract(const Duration(days: 7));
-    final rangeEnd =
-        (bundle.latestEnd ?? DateTime.now()).add(const Duration(days: 7));
-
     if (overwritePreviousImports &&
-        permission == CalendarPermissionStatus.granted) {
+        permission == CalendarPermissionStatus.granted &&
+        bundle.events.isNotEmpty) {
+      final overwriteRange = overwriteRangeFor(bundle);
       final oldEvents = await DeviceCalendar.instance.listEvents(
-        rangeStart,
-        rangeEnd,
+        overwriteRange.start,
+        overwriteRange.end,
         calendarIds: [calendarId],
       );
 
       for (final event in oldEvents) {
         final description = event.description ?? '';
         if (description.contains(importMarker)) {
-          String? targetId = event.eventId;
-          if (targetId == null || targetId.isEmpty) {
+          var targetId = event.eventId;
+          if (targetId.isEmpty) {
             targetId = event.instanceId;
           }
 
-          if (targetId != null && targetId.isNotEmpty) {
+          if (targetId.isNotEmpty) {
             try {
               await DeviceCalendar.instance.deleteEvent(eventId: targetId);
               deleted += 1;
@@ -135,12 +163,12 @@ class CalendarSyncService {
           final description = event.description ?? '';
           if (!description.contains(importMarker)) continue;
 
-          String? targetId = event.eventId;
-          if (targetId == null || targetId.isEmpty) {
+          var targetId = event.eventId;
+          if (targetId.isEmpty) {
             targetId = event.instanceId;
           }
 
-          if (targetId == null || targetId.isEmpty) {
+          if (targetId.isEmpty) {
             continue;
           }
 
