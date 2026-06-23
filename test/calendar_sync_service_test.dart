@@ -7,7 +7,7 @@ void main() {
       () {
     final bundle = ScheduleBundle(
       semesterId: '2025-2026-2',
-      semesterName: '2025-2026瀛﹀勾 绗?瀛︽湡',
+      semesterName: '2025-2026学年 第2学期',
       semesterStart: DateTime(2026, 3, 2),
       semesterEnd:
           DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
