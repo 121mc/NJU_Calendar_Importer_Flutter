@@ -243,6 +243,15 @@ UndergradSemesterOptions _semesterOptions() {
   );
 }
 
+UndergradSemesterOptions _semesterOptionsWithMissingCurrent() {
+  final options = _semesterOptions();
+  return UndergradSemesterOptions(
+    currentSemesterId: '2024-2025-2',
+    currentSemesterName: '2024-2025学年 第2学期',
+    semesters: options.semesters,
+  );
+}
+
 ScheduleBundle _bundleFor(NjuSemester semester) {
   return ScheduleBundle(
     semesterId: semester.id,
@@ -353,7 +362,38 @@ void main() {
       expect(scheduleService.fetchedSchedule, isTrue);
       expect(scheduleService.requestedSemesterId, '2025-2026-2');
       expect(find.text('系统日历同步'), findsOneWidget);
+      expect(find.text('已获取 2025-2026学年 第2学期'), findsOneWidget);
+      expect(find.text('课程 1 门 · 考试 0 场 · 可导入 1 条'), findsOneWidget);
       expect(find.text('一键清空本应用导入事件'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'undergrad current-semester fallback warns before fetching schedule',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'privacy_policy_accepted_v1': true,
+      });
+      final scheduleService = WidgetFakeScheduleService(
+        options: _semesterOptionsWithMissingCurrent(),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(
+            authService: WidgetFakeAuthService(
+              restoredSession: _undergradSession(),
+            ),
+            scheduleService: scheduleService,
+            calendarSyncService: WidgetFakeCalendarSyncService(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(scheduleService.fetchedSchedule, isFalse);
+      expect(find.textContaining('未在学期列表中找到当前学期'), findsOneWidget);
+      expect(find.textContaining('已默认选择 2025-2026学年 第2学期'), findsOneWidget);
     },
   );
 

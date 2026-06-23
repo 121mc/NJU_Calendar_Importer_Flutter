@@ -21,11 +21,21 @@ class UndergradSemesterOptions {
   final String currentSemesterName;
   final List<NjuSemester> semesters;
 
-  NjuSemester? get currentSemester {
+  NjuSemester? get matchingCurrentSemester {
     for (final semester in semesters) {
       if (semester.id == currentSemesterId) {
         return semester;
       }
+    }
+    return null;
+  }
+
+  bool get hasMatchingCurrentSemester => matchingCurrentSemester != null;
+
+  NjuSemester? get currentSemester {
+    final matching = matchingCurrentSemester;
+    if (matching != null) {
+      return matching;
     }
     return semesters.isEmpty ? null : semesters.first;
   }

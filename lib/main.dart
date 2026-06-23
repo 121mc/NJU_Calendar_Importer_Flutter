@@ -437,11 +437,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           await _scheduleService.fetchUndergradSemesterOptions(session);
       if (!mounted) return;
 
+      final selectedSemester = options.currentSemester;
       setState(() {
         _semesterOptions = options.semesters;
-        _selectedSemester = options.currentSemester;
+        _selectedSemester = selectedSemester;
         _semesterOptionsLoaded = true;
       });
+      if (selectedSemester != null && !options.hasMatchingCurrentSemester) {
+        _showSnackBar(
+          '未在学期列表中找到当前学期 ${options.currentSemesterName}，'
+          '已默认选择 ${selectedSemester.name}。',
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -858,6 +865,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             const Text(
               '系统日历同步',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '已获取 ${_bundle!.semesterName}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '课程 ${_bundle!.courseCount} 门 · '
+              '考试 ${_bundle!.examCount} 场 · '
+              '可导入 ${_bundle!.events.length} 条',
             ),
             const SizedBox(height: 12),
             Row(
