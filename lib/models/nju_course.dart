@@ -18,13 +18,19 @@ class NjuCourseEvent {
 
 class ScheduleBundle {
   ScheduleBundle({
+    required this.semesterId,
     required this.semesterName,
+    required this.semesterStart,
+    required this.semesterEnd,
     required this.events,
     required this.courseCount,
     required this.examCount,
   });
 
+  final String semesterId;
   final String semesterName;
+  final DateTime semesterStart;
+  final DateTime semesterEnd;
   final List<NjuCourseEvent> events;
   final int courseCount;
   final int examCount;

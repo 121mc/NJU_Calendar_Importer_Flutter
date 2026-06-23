@@ -6,7 +6,11 @@ void main() {
   test('overwrite range expands fetched schedule to week Monday through Sunday',
       () {
     final bundle = ScheduleBundle(
-      semesterName: '2025-2026-2',
+      semesterId: '2025-2026-2',
+      semesterName: '2025-2026瀛﹀勾 绗?瀛︽湡',
+      semesterStart: DateTime(2026, 3, 2),
+      semesterEnd:
+          DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
       courseCount: 2,
       examCount: 0,
       events: [
