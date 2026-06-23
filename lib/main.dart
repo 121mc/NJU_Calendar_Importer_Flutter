@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/login_models.dart';
 import 'models/nju_course.dart';
+import 'models/nju_semester.dart';
 import 'models/school_type.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
@@ -100,7 +101,16 @@ class NjuScheduleCalendarApp extends StatelessWidget {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({
+    super.key,
+    this.authService,
+    this.scheduleService,
+    this.calendarSyncService,
+  });
+
+  final AuthService? authService;
+  final NjuScheduleService? scheduleService;
+  final CalendarSyncService? calendarSyncService;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -116,6 +126,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   SessionInfo? _session;
   ScheduleBundle? _bundle;
+  List<NjuSemester> _semesterOptions = const [];
+  NjuSemester? _selectedSemester;
   List<Calendar> _calendars = const [];
 
   SchoolType _schoolType = SchoolType.undergrad;
@@ -123,6 +135,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _overwritePreviousImports = true;
 
   bool _loggingIn = false;
+  bool _loadingSemesters = false;
+  bool _semesterOptionsLoaded = false;
   bool _loadingSchedule = false;
   bool _loadingCalendars = false;
   bool _syncingCalendar = false;
@@ -139,9 +153,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     _storageService = StorageService();
-    _authService = AuthService(_storageService);
-    _scheduleService = NjuScheduleService(_authService);
-    _calendarSyncService = CalendarSyncService();
+    _authService = widget.authService ?? AuthService(_storageService);
+    _scheduleService =
+        widget.scheduleService ?? NjuScheduleService(_authService);
+    _calendarSyncService = widget.calendarSyncService ?? CalendarSyncService();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeApp();
@@ -269,8 +284,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _session = savedSession;
         _schoolType = savedSession.schoolType;
       });
-      await _loadSchedule();
+      await _prepareScheduleForSession();
     }
+  }
+
+  Future<void> _prepareScheduleForSession() async {
+    final session = _session;
+    if (session == null) return;
+
+    if (session.schoolType == SchoolType.undergrad) {
+      await _loadSemesterOptions();
+      return;
+    }
+
+    await _loadSchedule();
   }
 
   Future<void> _checkCalendarPermissionOnLaunch({bool silent = false}) async {
@@ -354,10 +381,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
       setState(() {
         _session = session;
+        _schoolType = session.schoolType;
         _bundle = null;
+        _semesterOptions = const [];
+        _selectedSemester = null;
+        _semesterOptionsLoaded = false;
+        _calendars = const [];
+        _selectedCalendarId = null;
       });
       _showSnackBar('登录成功，已保存登录态。');
-      await _loadSchedule();
+      await _prepareScheduleForSession();
     } catch (e) {
       if (!mounted) return;
       _showSnackBar('网页登录失败：$e');
@@ -378,24 +411,90 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() {
       _session = null;
       _bundle = null;
+      _semesterOptions = const [];
+      _selectedSemester = null;
+      _semesterOptionsLoaded = false;
       _calendars = const [];
       _selectedCalendarId = null;
     });
     _showSnackBar('已清除登录态。');
   }
 
+  Future<void> _loadSemesterOptions() async {
+    final session = _session;
+    if (session == null || session.schoolType != SchoolType.undergrad) return;
+
+    setState(() {
+      _loadingSemesters = true;
+      _semesterOptionsLoaded = false;
+      _semesterOptions = const [];
+      _selectedSemester = null;
+      _bundle = null;
+    });
+
+    try {
+      final options =
+          await _scheduleService.fetchUndergradSemesterOptions(session);
+      if (!mounted) return;
+
+      setState(() {
+        _semesterOptions = options.semesters;
+        _selectedSemester = options.currentSemester;
+        _semesterOptionsLoaded = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _semesterOptionsLoaded = true;
+      });
+      _showSnackBar('加载学期列表失败：$e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingSemesters = false;
+        });
+      }
+    }
+  }
+
   Future<void> _loadSchedule() async {
-    if (_session == null) return;
+    final session = _session;
+    if (session == null) return;
+
+    final selectedSemester = _selectedSemester;
+    if (session.schoolType == SchoolType.undergrad &&
+        selectedSemester == null) {
+      _showSnackBar('请先选择课表学期。');
+      return;
+    }
 
     setState(() {
       _loadingSchedule = true;
     });
     try {
-      final bundle = await _scheduleService.fetchCurrentSemesterSchedule(
-        _session!,
-        includeFinalExams: true,
-      );
+      final bundle = session.schoolType == SchoolType.undergrad
+          ? await _scheduleService.fetchUndergradScheduleForSemester(
+              session,
+              semesterId: selectedSemester!.id,
+              semesterName: selectedSemester.name,
+              semesterStart: selectedSemester.start,
+              semesterEnd: selectedSemester.end,
+              includeFinalExams: true,
+            )
+          : await _scheduleService.fetchCurrentSemesterSchedule(
+              session,
+              includeFinalExams: true,
+            );
       if (!mounted) return;
+
+      if (bundle.events.isEmpty) {
+        setState(() {
+          _bundle = null;
+          _loadingSchedule = false;
+        });
+        await _showEmptyScheduleDialog(bundle.semesterName);
+        return;
+      }
 
       setState(() {
         _bundle = bundle;
@@ -411,6 +510,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  Future<void> _showEmptyScheduleDialog(String semesterName) async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('未查询到课表'),
+          content: Text('$semesterName 暂未查询到课程或考试安排。'),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _loadCalendars() async {
@@ -565,10 +684,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         _buildLoginCard()
                       else
                         _buildSessionCard(),
+                      if (_session?.schoolType == SchoolType.undergrad) ...[
+                        const SizedBox(height: 12),
+                        _buildSemesterCard(),
+                      ],
                       if (_bundle != null) ...[
                         const SizedBox(height: 12),
                         _buildCalendarCard(),
                       ],
+                      const SizedBox(height: 12),
+                      _buildGeneratedEventsCleanupCard(),
                     ],
                   ),
                 ),
@@ -701,6 +826,82 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildSemesterCard() {
+    final hasSemesterOptions = _semesterOptions.isNotEmpty;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '课表学期',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            if (_loadingSemesters) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(),
+            ],
+            if (!_loadingSemesters &&
+                _semesterOptionsLoaded &&
+                !hasSemesterOptions) ...[
+              const SizedBox(height: 12),
+              const Text('未获取到可选择的本科课表学期。'),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _loadSemesterOptions,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新加载学期列表'),
+              ),
+            ],
+            if (hasSemesterOptions) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<NjuSemester>(
+                initialValue: _selectedSemester,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '选择要导入的学期',
+                  border: OutlineInputBorder(),
+                ),
+                items: _semesterOptions
+                    .map(
+                      (semester) => DropdownMenuItem<NjuSemester>(
+                        value: semester,
+                        child: Text(semester.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: _loadingSchedule
+                    ? null
+                    : (semester) {
+                        setState(() {
+                          _selectedSemester = semester;
+                          _bundle = null;
+                        });
+                      },
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _loadingSchedule || _selectedSemester == null
+                    ? null
+                    : _loadSchedule,
+                icon: _loadingSchedule
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_for_offline),
+                label: const Text('拉取所选学期课表'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCalendarCard() {
     return Card(
       child: Padding(
@@ -801,6 +1002,35 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           )
                         : const Icon(Icons.delete_sweep),
                     label: const Text('一键清空本应用导入事件'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGeneratedEventsCleanupCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '删除本软件生成的日程',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.delete_sweep),
+                    label: const Text('删除本软件生成的日程'),
                   ),
                 ),
               ],
