@@ -5,8 +5,31 @@ import 'package:dio/dio.dart';
 
 import '../models/login_models.dart';
 import '../models/nju_course.dart';
+import '../models/nju_semester.dart';
 import '../models/school_type.dart';
 import 'auth_service.dart';
+import 'calendar_import_metadata.dart';
+
+class UndergradSemesterOptions {
+  const UndergradSemesterOptions({
+    required this.currentSemesterId,
+    required this.currentSemesterName,
+    required this.semesters,
+  });
+
+  final String currentSemesterId;
+  final String currentSemesterName;
+  final List<NjuSemester> semesters;
+
+  NjuSemester? get currentSemester {
+    for (final semester in semesters) {
+      if (semester.id == currentSemesterId) {
+        return semester;
+      }
+    }
+    return semesters.isEmpty ? null : semesters.first;
+  }
+}
 
 class NjuScheduleService {
   NjuScheduleService(this._authService);
@@ -26,10 +49,71 @@ class NjuScheduleService {
     }
   }
 
+  Future<UndergradSemesterOptions> fetchUndergradSemesterOptions(
+    SessionInfo session,
+  ) async {
+    final dio = await _authService.buildAuthenticatedDio(session);
+    final current = await _fetchUndergradCurrentSemester(dio);
+    final semesters = await _fetchUndergradSemesterList(
+      dio,
+      currentSemesterId: current.$1,
+    );
+
+    if (semesters.isEmpty) {
+      throw Exception('本科-学期列表接口未返回可用学期。');
+    }
+
+    return UndergradSemesterOptions(
+      currentSemesterId: current.$1,
+      currentSemesterName: current.$2,
+      semesters: semesters,
+    );
+  }
+
+  Future<ScheduleBundle> fetchUndergradScheduleForSemester(
+    SessionInfo session, {
+    required String semesterId,
+    required String semesterName,
+    required DateTime semesterStart,
+    required DateTime semesterEnd,
+    bool includeFinalExams = true,
+  }) async {
+    final dio = await _authService.buildAuthenticatedDio(session);
+    return _fetchUndergradForSemester(
+      dio,
+      semesterId: semesterId,
+      semesterName: semesterName,
+      semesterStart: semesterStart,
+      semesterEnd: semesterEnd,
+      includeFinalExams: includeFinalExams,
+    );
+  }
+
   Future<ScheduleBundle> _fetchUndergrad(
     Dio dio, {
     required bool includeFinalExams,
   }) async {
+    final current = await _fetchUndergradCurrentSemester(dio);
+    final allSemesters = await _fetchUndergradSemesterList(
+      dio,
+      currentSemesterId: current.$1,
+    );
+    final semester = allSemesters.firstWhere(
+      (item) => item.id == current.$1,
+      orElse: () => throw Exception('未找到当前学期的起始日期。'),
+    );
+
+    return _fetchUndergradForSemester(
+      dio,
+      semesterId: semester.id,
+      semesterName: current.$2,
+      semesterStart: semester.start,
+      semesterEnd: semester.end,
+      includeFinalExams: includeFinalExams,
+    );
+  }
+
+  Future<(String, String)> _fetchUndergradCurrentSemester(Dio dio) async {
     final currentSemesterResp = await dio.get<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/jshkcb/dqxnxq.do',
     );
@@ -44,10 +128,13 @@ class NjuScheduleService {
     if (semesterRows.isEmpty) {
       throw Exception('本科-当前学期接口未返回 rows。可能是登录态失效，或接口结构发生变化。');
     }
-    final semesterRow = semesterRows.first;
-    final semesterId = '${semesterRow['DM']}';
-    final semesterName = '${semesterRow['MC'] ?? semesterId}';
+    return NjuSemester.currentUndergradIdAndName(semesterRows.first);
+  }
 
+  Future<List<NjuSemester>> _fetchUndergradSemesterList(
+    Dio dio, {
+    required String? currentSemesterId,
+  }) async {
     final allSemesterResp = await dio.get<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/jshkcb/cxjcs.do',
     );
@@ -59,18 +146,24 @@ class NjuScheduleService {
       allSemesterData,
       ['datas', 'cxjcs', 'rows'],
     );
-    final semesterMeta = allSemesterRows.firstWhere(
-      (row) => '${row['XN']}-${row['XQ']}' == semesterId,
-      orElse: () => throw Exception('未找到当前学期的起始日期。'),
-    );
-    final semesterStart =
-        _parseDateOnly('${semesterMeta['XQKSRQ']}'.substring(0, 10));
-    final weekCount = int.tryParse('${semesterMeta['ZZC'] ?? ''}') ?? 0;
-    final safeWeekCount = weekCount <= 0 ? 1 : weekCount;
-    final semesterEnd = semesterStart
-        .add(Duration(days: safeWeekCount * DateTime.daysPerWeek))
-        .subtract(const Duration(milliseconds: 1));
+    return allSemesterRows
+        .map(
+          (row) => NjuSemester.fromUndergradRow(
+            row,
+            currentSemesterId: currentSemesterId,
+          ),
+        )
+        .toList();
+  }
 
+  Future<ScheduleBundle> _fetchUndergradForSemester(
+    Dio dio, {
+    required String semesterId,
+    required String semesterName,
+    required DateTime semesterStart,
+    required DateTime semesterEnd,
+    required bool includeFinalExams,
+  }) async {
     final coursesResp = await dio.post<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
       data: {
@@ -91,7 +184,7 @@ class NjuScheduleService {
 
     final events = <NjuCourseEvent>[];
     for (final row in courseRows) {
-      events.addAll(_mapUndergradCourse(row, semesterStart));
+      events.addAll(_mapUndergradCourse(row, semesterStart, semesterId));
     }
 
     var examCount = 0;
@@ -116,7 +209,7 @@ class NjuScheduleService {
       );
       examCount = examRows.length;
       for (final row in examRows) {
-        final event = _mapUndergradExam(row);
+        final event = _mapUndergradExam(row, semesterId);
         if (event != null) {
           events.add(event);
         }
@@ -210,6 +303,7 @@ class NjuScheduleService {
           row,
           semesterStart,
           courseIdToCampus['${row['KCDM']}'],
+          semesterId,
         ),
       );
     }
@@ -276,7 +370,8 @@ class NjuScheduleService {
     throw Exception('$apiName 返回了不支持的类型：${raw.runtimeType}');
   }
 
-  List<Map<String, dynamic>> _mergeGraduateRows(List<Map<String, dynamic>> rows) {
+  List<Map<String, dynamic>> _mergeGraduateRows(
+      List<Map<String, dynamic>> rows) {
     final grouped = <String, List<Map<String, dynamic>>>{};
     for (final row in rows) {
       final key = '${row['BJMC'] ?? ''}';
@@ -297,8 +392,7 @@ class NjuScheduleService {
           continue;
         }
         final last = merged.last;
-        final canMerge =
-            '${last['BJMC']}' == '${row['BJMC']}' &&
+        final canMerge = '${last['BJMC']}' == '${row['BJMC']}' &&
             _toInt(last['XQ']) == _toInt(row['XQ']) &&
             '${last['ZCBH']}' == '${row['ZCBH']}' &&
             '${last['JASMC']}' == '${row['JASMC']}' &&
@@ -320,6 +414,7 @@ class NjuScheduleService {
   List<NjuCourseEvent> _mapUndergradCourse(
     Map<String, dynamic> row,
     DateTime semesterStart,
+    String semesterId,
   ) {
     final ksjc = _toInt(row['KSJC']);
     final jsjc = _toInt(row['JSJC']);
@@ -395,13 +490,15 @@ class NjuScheduleService {
         location,
       );
       final description = _buildDescription(
+        semesterId: semesterId,
         importKey: importKey,
         schoolLabel: '本科生',
         teacher: teacher,
         className: className,
         campus: campus,
         extraLines: [
-          if (studentClasses != null && studentClasses.isNotEmpty) '上课班级：$studentClasses',
+          if (studentClasses != null && studentClasses.isNotEmpty)
+            '上课班级：$studentClasses',
         ],
       );
       events.add(
@@ -418,7 +515,8 @@ class NjuScheduleService {
     return events;
   }
 
-  NjuCourseEvent? _mapUndergradExam(Map<String, dynamic> row) {
+  NjuCourseEvent? _mapUndergradExam(
+      Map<String, dynamic> row, String semesterId) {
     final dateText = _stringOrNull(row['KSRQ']);
     final startText = _stringOrNull(row['KSKSSJ']);
     final endText = _stringOrNull(row['KSJSSJ']);
@@ -448,7 +546,8 @@ class NjuScheduleService {
     final title = '${row['KCM'] ?? '未命名课程'}期末考试';
     final location = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['ZJJSXM']);
-    final importKey = _buildImportKey('undergrad_exam', title, start, end, location);
+    final importKey =
+        _buildImportKey('undergrad_exam', title, start, end, location);
 
     return NjuCourseEvent(
       title: title,
@@ -457,6 +556,7 @@ class NjuScheduleService {
       location: location,
       importKey: importKey,
       description: _buildDescription(
+        semesterId: semesterId,
         importKey: importKey,
         schoolLabel: '本科生',
         teacher: teacher,
@@ -471,6 +571,7 @@ class NjuScheduleService {
     Map<String, dynamic> row,
     DateTime semesterStart,
     String? campus,
+    String semesterId,
   ) {
     final startTime = _hhmmToHourMinute(_toInt(row['KSSJ']));
     final endTime = _hhmmToHourMinute(_toInt(row['JSSJ']));
@@ -507,6 +608,7 @@ class NjuScheduleService {
         location,
       );
       final description = _buildDescription(
+        semesterId: semesterId,
         importKey: importKey,
         schoolLabel: '研究生',
         teacher: teacher,
@@ -554,6 +656,7 @@ class NjuScheduleService {
   }
 
   String _buildDescription({
+    required String semesterId,
     required String importKey,
     required String schoolLabel,
     required String? teacher,
@@ -562,17 +665,20 @@ class NjuScheduleService {
     required List<String> extraLines,
   }) {
     final sanitizedTeacher = _sanitizeTeacher(teacher);
-
-    return [
-      '[NJU_SCHEDULE_IMPORT]',
-      'import_key=$importKey',
+    final detailLines = [
       '学校：$schoolLabel',
       if (sanitizedTeacher != null && sanitizedTeacher.isNotEmpty)
         '教师：$sanitizedTeacher',
       if (className != null && className.isNotEmpty) '班级：$className',
       if (campus != null && campus.isNotEmpty) '校区：$campus',
       ...extraLines,
-    ].join('\n');
+    ];
+
+    return CalendarImportMetadata.buildDescription(
+      semesterId: semesterId,
+      importKey: importKey,
+      detailLines: detailLines,
+    );
   }
 
   List<Map<String, dynamic>> _readRows(
