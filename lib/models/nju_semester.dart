@@ -30,7 +30,7 @@ class NjuSemester {
 
     return NjuSemester(
       id: id,
-      name: '$year瀛﹀勾 ${_termDisplayName(term)}',
+      name: '$year学年 ${_termDisplayName(term)}',
       year: year,
       term: term,
       start: start,
@@ -50,13 +50,13 @@ class NjuSemester {
   static String _termDisplayName(String term) {
     switch (term) {
       case '1':
-        return '绗?瀛︽湡';
+        return '第1学期';
       case '2':
-        return '绗?瀛︽湡';
+        return '第2学期';
       case '3':
-        return '鏆戞湡';
+        return '暑期';
       default:
-        return '绗?term瀛︽湡';
+        return '第$term学期';
     }
   }
 

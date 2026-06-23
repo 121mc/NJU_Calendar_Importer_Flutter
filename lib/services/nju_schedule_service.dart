@@ -65,6 +65,11 @@ class NjuScheduleService {
     );
     final semesterStart =
         _parseDateOnly('${semesterMeta['XQKSRQ']}'.substring(0, 10));
+    final weekCount = int.tryParse('${semesterMeta['ZZC'] ?? ''}') ?? 0;
+    final safeWeekCount = weekCount <= 0 ? 1 : weekCount;
+    final semesterEnd = semesterStart
+        .add(Duration(days: safeWeekCount * DateTime.daysPerWeek))
+        .subtract(const Duration(milliseconds: 1));
 
     final coursesResp = await dio.post<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
@@ -121,7 +126,10 @@ class NjuScheduleService {
     events.sort((a, b) => a.start.compareTo(b.start));
 
     return ScheduleBundle(
+      semesterId: semesterId,
       semesterName: semesterName,
+      semesterStart: semesterStart,
+      semesterEnd: semesterEnd,
       events: events,
       courseCount: courseRows.length,
       examCount: examCount,
@@ -208,7 +216,10 @@ class NjuScheduleService {
     events.sort((a, b) => a.start.compareTo(b.start));
 
     return ScheduleBundle(
+      semesterId: semesterId,
       semesterName: semesterName,
+      semesterStart: semesterStart,
+      semesterEnd: semesterStart,
       events: events,
       courseCount: mergedRows.length,
       examCount: 0,

@@ -14,7 +14,7 @@ void main() {
     );
 
     expect(semester.id, '2025-2026-2');
-    expect(semester.name, '2025-2026瀛﹀勾 绗?瀛︽湡');
+    expect(semester.name, '2025-2026学年 第2学期');
     expect(semester.year, '2025-2026');
     expect(semester.term, '2');
     expect(semester.start, DateTime(2026, 3, 2));
@@ -35,7 +35,7 @@ void main() {
     );
 
     expect(semester.id, '2025-2026-3');
-    expect(semester.name, '2025-2026瀛﹀勾 鏆戞湡');
+    expect(semester.name, '2025-2026学年 暑期');
     expect(semester.start, DateTime(2026, 7, 6));
     expect(semester.end,
         DateTime(2026, 8, 3).subtract(const Duration(milliseconds: 1)));
@@ -45,10 +45,40 @@ void main() {
   test('parses current semester row id and name', () {
     final current = NjuSemester.currentUndergradIdAndName({
       'DM': '2025-2026-2',
-      'MC': '2025-2026瀛﹀勾 绗?瀛︽湡',
+      'MC': '2025-2026学年 第2学期',
     });
 
     expect(current.$1, '2025-2026-2');
-    expect(current.$2, '2025-2026瀛﹀勾 绗?瀛︽湡');
+    expect(current.$2, '2025-2026学年 第2学期');
+  });
+
+  test('parses undergrad first semester row with first term display name', () {
+    final semester = NjuSemester.fromUndergradRow(
+      {
+        'XN': '2025-2026',
+        'XQ': '1',
+        'XQKSRQ': '2025-09-01 00:00:00',
+        'ZZC': 18,
+      },
+      currentSemesterId: null,
+    );
+
+    expect(semester.id, '2025-2026-1');
+    expect(semester.name, '2025-2026学年 第1学期');
+  });
+
+  test('parses unknown undergrad term with numbered fallback display name', () {
+    final semester = NjuSemester.fromUndergradRow(
+      {
+        'XN': '2025-2026',
+        'XQ': '4',
+        'XQKSRQ': '2026-08-03 00:00:00',
+        'ZZC': 1,
+      },
+      currentSemesterId: null,
+    );
+
+    expect(semester.id, '2025-2026-4');
+    expect(semester.name, '2025-2026学年 第4学期');
   });
 }
