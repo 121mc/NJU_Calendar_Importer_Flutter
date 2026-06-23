@@ -2,6 +2,7 @@
 .packages
 .pub/
 build/
+.worktrees/
 .idea/
 .vscode/
 .flutter-plugins
