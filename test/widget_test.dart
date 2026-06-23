@@ -7,6 +7,7 @@ import 'package:nju_calendar_importer_flutter/models/login_models.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_course.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_semester.dart';
 import 'package:nju_calendar_importer_flutter/models/school_type.dart';
+import 'package:nju_calendar_importer_flutter/pages/generated_events_cleanup_page.dart';
 import 'package:nju_calendar_importer_flutter/services/auth_service.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_sync_service.dart';
 import 'package:nju_calendar_importer_flutter/services/nju_schedule_service.dart';
@@ -133,14 +134,23 @@ class WidgetFakeScheduleService extends NjuScheduleService {
   WidgetFakeScheduleService({
     required this.options,
     ScheduleBundle? bundle,
+    ScheduleBundle? currentBundle,
   })  : bundle = bundle ?? _bundleFor(options.currentSemester!),
+        currentBundle =
+            currentBundle ?? bundle ?? _bundleFor(options.currentSemester!),
         super(WidgetFakeAuthService());
 
   final UndergradSemesterOptions options;
   final ScheduleBundle bundle;
+  final ScheduleBundle currentBundle;
   var fetchedOptions = false;
   var fetchedSchedule = false;
+  var fetchedCurrentSchedule = false;
   String? requestedSemesterId;
+  String? requestedSemesterName;
+  DateTime? requestedSemesterStart;
+  DateTime? requestedSemesterEnd;
+  bool? requestedIncludeFinalExams;
 
   @override
   Future<UndergradSemesterOptions> fetchUndergradSemesterOptions(
@@ -161,7 +171,21 @@ class WidgetFakeScheduleService extends NjuScheduleService {
   }) async {
     fetchedSchedule = true;
     requestedSemesterId = semesterId;
+    requestedSemesterName = semesterName;
+    requestedSemesterStart = semesterStart;
+    requestedSemesterEnd = semesterEnd;
+    requestedIncludeFinalExams = includeFinalExams;
     return bundle;
+  }
+
+  @override
+  Future<ScheduleBundle> fetchCurrentSemesterSchedule(
+    SessionInfo session, {
+    bool includeFinalExams = true,
+  }) async {
+    fetchedCurrentSchedule = true;
+    requestedIncludeFinalExams = includeFinalExams;
+    return currentBundle;
   }
 }
 
@@ -171,6 +195,14 @@ SessionInfo _undergradSession() {
   return const SessionInfo(
     username: 'student',
     schoolType: SchoolType.undergrad,
+    cookiesByBaseUrl: {},
+  );
+}
+
+SessionInfo _graduateSession() {
+  return const SessionInfo(
+    username: 'student',
+    schoolType: SchoolType.graduate,
     cookiesByBaseUrl: {},
   );
 }
@@ -287,9 +319,9 @@ void main() {
       expect(find.text('拉取所选学期课表'), findsOneWidget);
       expect(find.text('系统日历同步'), findsNothing);
 
-      final cleanupButton = find.widgetWithText(OutlinedButton, '删除本软件生成的日程');
+      final cleanupButton = find.widgetWithText(OutlinedButton, '扫描并删除导入日程');
       expect(cleanupButton, findsOneWidget);
-      expect(tester.widget<OutlinedButton>(cleanupButton).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(cleanupButton).onPressed, isNotNull);
     },
   );
 
@@ -320,6 +352,74 @@ void main() {
 
       expect(scheduleService.fetchedSchedule, isTrue);
       expect(scheduleService.requestedSemesterId, '2025-2026-2');
+      expect(find.text('系统日历同步'), findsOneWidget);
+      expect(find.text('一键清空本应用导入事件'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'selecting a non-current undergrad semester forwards full fetch arguments',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'privacy_policy_accepted_v1': true,
+      });
+      final options = _semesterOptions();
+      final scheduleService = WidgetFakeScheduleService(options: options);
+      final selectedSemester = options.semesters.last;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(
+            authService: WidgetFakeAuthService(
+              restoredSession: _undergradSession(),
+            ),
+            scheduleService: scheduleService,
+            calendarSyncService: WidgetFakeCalendarSyncService(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(DropdownButtonFormField<NjuSemester>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(selectedSemester.name).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('拉取所选学期课表'));
+      await tester.pumpAndSettle();
+
+      expect(scheduleService.requestedSemesterId, selectedSemester.id);
+      expect(scheduleService.requestedSemesterName, selectedSemester.name);
+      expect(scheduleService.requestedSemesterStart, selectedSemester.start);
+      expect(scheduleService.requestedSemesterEnd, selectedSemester.end);
+      expect(scheduleService.requestedIncludeFinalExams, isTrue);
+    },
+  );
+
+  testWidgets(
+    'restored graduate session keeps current-semester auto fetch',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'privacy_policy_accepted_v1': true,
+      });
+      final options = _semesterOptions();
+      final scheduleService = WidgetFakeScheduleService(options: options);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(
+            authService: WidgetFakeAuthService(
+              restoredSession: _graduateSession(),
+            ),
+            scheduleService: scheduleService,
+            calendarSyncService: WidgetFakeCalendarSyncService(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(scheduleService.fetchedOptions, isFalse);
+      expect(scheduleService.fetchedCurrentSchedule, isTrue);
+      expect(find.text('课表学期'), findsNothing);
       expect(find.text('系统日历同步'), findsOneWidget);
     },
   );
@@ -356,4 +456,28 @@ void main() {
       expect(find.text('系统日历同步'), findsNothing);
     },
   );
+
+  testWidgets('cleanup card opens generated events cleanup page',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_v1': true,
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          authService: WidgetFakeAuthService(),
+          scheduleService:
+              WidgetFakeScheduleService(options: _semesterOptions()),
+          calendarSyncService: WidgetFakeCalendarSyncService(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('扫描并删除导入日程'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GeneratedEventsCleanupPage), findsOneWidget);
+  });
 }

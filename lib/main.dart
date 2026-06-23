@@ -6,6 +6,7 @@ import 'models/login_models.dart';
 import 'models/nju_course.dart';
 import 'models/nju_semester.dart';
 import 'models/school_type.dart';
+import 'pages/generated_events_cleanup_page.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
 import 'services/calendar_sync_service.dart';
@@ -140,7 +141,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _loadingSchedule = false;
   bool _loadingCalendars = false;
   bool _syncingCalendar = false;
-  bool _deletingImportedEvents = false;
   bool _permissionCheckRunning = false;
   bool _privacyAccepted = false;
   bool _privacyReady = false;
@@ -599,60 +599,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _deleteImportedEvents() async {
-    if (_selectedCalendarId == null) {
-      _showSnackBar('请先选择一个目标日历。');
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) {
-            return AlertDialog(
-              title: const Text('确认清空'),
-              content: const Text(
-                '将删除当前所选日历中由本应用导入的全部事件。\n\n不会删除你手动创建的普通日历事件。是否继续？',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('确认删除'),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!confirmed) return;
-
-    setState(() {
-      _deletingImportedEvents = true;
-    });
-
-    try {
-      final deleted = await _calendarSyncService.deleteImportedEvents(
-        calendarId: _selectedCalendarId!,
-      );
-
-      if (!mounted) return;
-      _showSnackBar('已删除 $deleted 条由本应用导入的日历事件。');
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar('清空失败：$e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _deletingImportedEvents = false;
-        });
-      }
-    }
-  }
-
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -985,27 +931,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed:
-                        (_deletingImportedEvents || _selectedCalendarId == null)
-                            ? null
-                            : _deleteImportedEvents,
-                    icon: _deletingImportedEvents
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete_sweep),
-                    label: const Text('一键清空本应用导入事件'),
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
       ),
@@ -1028,9 +953,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: null,
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => GeneratedEventsCleanupPage(
+                            calendarSyncService: _calendarSyncService,
+                          ),
+                        ),
+                      );
+                    },
                     icon: const Icon(Icons.delete_sweep),
-                    label: const Text('删除本软件生成的日程'),
+                    label: const Text('扫描并删除导入日程'),
                   ),
                 ),
               ],

@@ -2,6 +2,7 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:device_calendar_plus_platform_interface/device_calendar_plus_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_course.dart';
+import 'package:nju_calendar_importer_flutter/services/calendar_import_metadata.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_sync_service.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -15,6 +16,7 @@ class CalendarSyncFakePlatform extends DeviceCalendarPlusPlatform
   final deletedEventIds = <String>[];
   final listEventCalls =
       <({DateTime start, DateTime end, List<String>? calendarIds})>[];
+  List<Map<String, dynamic>> calendars = const [];
   List<Map<String, dynamic>> events = const [];
 
   @override
@@ -27,7 +29,7 @@ class CalendarSyncFakePlatform extends DeviceCalendarPlusPlatform
   Future<void> openAppSettings() async {}
 
   @override
-  Future<List<Map<String, dynamic>>> listCalendars() async => [];
+  Future<List<Map<String, dynamic>>> listCalendars() async => calendars;
 
   @override
   Future<List<Map<String, dynamic>>> listSources() async => [];
@@ -313,6 +315,90 @@ void main() {
     final deleted = await CalendarSyncService().deleteImportedEvents(
       calendarId: 'target-calendar',
     );
+
+    expect(deleted, 2);
+    expect(fakePlatform.deletedEventIds, [
+      'current-marker',
+      'legacy-marker',
+    ]);
+  });
+
+  test('scanGeneratedEventGroups groups generated events across calendars',
+      () async {
+    final currentYear = DateTime.now().year;
+    fakePlatform.calendars = [
+      {
+        'id': 'personal',
+        'name': 'Personal',
+        'readOnly': false,
+      },
+      {
+        'id': 'work',
+        'name': 'Work',
+        'readOnly': false,
+      },
+    ];
+    fakePlatform.events = [
+      importedCalendarEvent(
+        id: 'current-marker',
+        calendarId: 'personal',
+        description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
+        start: DateTime(currentYear, 3, 3),
+      ),
+      importedCalendarEvent(
+        id: 'legacy-marker',
+        calendarId: 'work',
+        description: '[NJU_SCHEDULE_IMPORT]\nimport_key=old',
+        start: DateTime(currentYear, 4, 4),
+      ),
+      importedCalendarEvent(
+        id: 'manual',
+        calendarId: 'personal',
+        description: 'manual event',
+        start: DateTime(currentYear, 5, 5),
+      ),
+    ];
+
+    final groups = await CalendarSyncService().scanGeneratedEventGroups();
+
+    expect(groups.map((group) => group.label), [
+      '2025-2026-2',
+      CalendarImportMetadata.legacyGroupLabel,
+    ]);
+    expect(groups.first.events.single.deleteId, 'current-marker');
+    expect(groups.first.events.single.calendarName, 'Personal');
+    expect(groups.last.events.single.deleteId, 'legacy-marker');
+    expect(groups.last.events.single.calendarName, 'Work');
+  });
+
+  test('deleteGeneratedEventGroups deletes every event in selected groups',
+      () async {
+    final deleted = await CalendarSyncService().deleteGeneratedEventGroups([
+      GeneratedEventsGroup(
+        semesterId: '2025-2026-2',
+        label: '2025-2026-2',
+        events: const [
+          ImportedCalendarEvent(
+            deleteId: 'current-marker',
+            calendarId: 'personal',
+            calendarName: 'Personal',
+            description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
+          ),
+        ],
+      ),
+      GeneratedEventsGroup(
+        semesterId: null,
+        label: CalendarImportMetadata.legacyGroupLabel,
+        events: const [
+          ImportedCalendarEvent(
+            deleteId: 'legacy-marker',
+            calendarId: 'work',
+            calendarName: 'Work',
+            description: '[NJU_SCHEDULE_IMPORT]',
+          ),
+        ],
+      ),
+    ]);
 
     expect(deleted, 2);
     expect(fakePlatform.deletedEventIds, [

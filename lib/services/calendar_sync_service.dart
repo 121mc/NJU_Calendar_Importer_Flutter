@@ -197,4 +197,83 @@ class CalendarSyncService {
 
     return deleted;
   }
+
+  Future<List<GeneratedEventsGroup>> scanGeneratedEventGroups() async {
+    final permission = await _ensurePermissions();
+
+    if (permission != CalendarPermissionStatus.granted) {
+      throw Exception('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。');
+    }
+
+    final calendars = await DeviceCalendar.instance.listCalendars();
+    final now = DateTime.now();
+    final importedEvents = <ImportedCalendarEvent>[];
+
+    for (final calendar in calendars) {
+      for (var i = -5; i <= 5; i++) {
+        final year = now.year + i;
+        final rangeStart = DateTime(year, 1, 1);
+        final rangeEnd = DateTime(year, 12, 31, 23, 59, 59);
+
+        final events = await DeviceCalendar.instance.listEvents(
+          rangeStart,
+          rangeEnd,
+          calendarIds: [calendar.id],
+        );
+
+        for (final event in events) {
+          final metadata = CalendarImportMetadata.parse(event.description);
+          if (!metadata.isGeneratedByApp) {
+            continue;
+          }
+
+          var deleteId = event.eventId;
+          if (deleteId.isEmpty) {
+            deleteId = event.instanceId;
+          }
+          if (deleteId.isEmpty) {
+            continue;
+          }
+
+          importedEvents.add(
+            ImportedCalendarEvent(
+              deleteId: deleteId,
+              calendarId: calendar.id,
+              calendarName: calendar.name,
+              description: event.description,
+            ),
+          );
+        }
+      }
+    }
+
+    return CalendarImportMetadata.groupGeneratedEvents(importedEvents);
+  }
+
+  Future<int> deleteGeneratedEventGroup(GeneratedEventsGroup group) {
+    return deleteGeneratedEventGroups([group]);
+  }
+
+  Future<int> deleteGeneratedEventGroups(
+    List<GeneratedEventsGroup> groups,
+  ) async {
+    final permission = await _ensurePermissions();
+
+    if (permission != CalendarPermissionStatus.granted) {
+      throw Exception('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。');
+    }
+
+    var deleted = 0;
+    for (final group in groups) {
+      for (final event in group.events) {
+        try {
+          await DeviceCalendar.instance.deleteEvent(eventId: event.deleteId);
+          deleted += 1;
+        } catch (_) {
+          // Ignore one failed deletion so cleanup can continue.
+        }
+      }
+    }
+    return deleted;
+  }
 }
