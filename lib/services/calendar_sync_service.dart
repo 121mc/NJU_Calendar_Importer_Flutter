@@ -82,34 +82,11 @@ class CalendarSyncService {
 
     if (overwritePreviousImports &&
         permission == CalendarPermissionStatus.granted) {
-      final overwriteRange = overwriteRangeFor(bundle);
-      final oldEvents = await DeviceCalendar.instance.listEvents(
-        overwriteRange.start,
-        overwriteRange.end,
-        calendarIds: [calendarId],
+      deleted = await _deleteGeneratedEventsInRangeForSemester(
+        calendarId: calendarId,
+        range: overwriteRangeFor(bundle),
+        semesterId: bundle.semesterId,
       );
-
-      for (final event in oldEvents) {
-        final description = event.description ?? '';
-        if (CalendarImportMetadata.shouldDeleteForSemesterOverwrite(
-          description: description,
-          selectedSemesterId: bundle.semesterId,
-        )) {
-          var targetId = event.eventId;
-          if (targetId.isEmpty) {
-            targetId = event.instanceId;
-          }
-
-          if (targetId.isNotEmpty) {
-            try {
-              await DeviceCalendar.instance.deleteEvent(eventId: targetId);
-              deleted += 1;
-            } catch (_) {
-              // 静默忽略单个日程删除失败的情况
-            }
-          }
-        }
-      }
     } else if (overwritePreviousImports &&
         permission == CalendarPermissionStatus.writeOnly) {
       warning = '当前只有写入级权限，无法读取旧事件，因此本次未执行覆盖删除，可能会产生重复。';
@@ -144,8 +121,9 @@ class CalendarSyncService {
     );
   }
 
-  Future<int> deleteImportedEvents({
+  Future<int> deleteGeneratedEventsForBundle({
     required String calendarId,
+    required ScheduleBundle bundle,
   }) async {
     final permission = await _ensurePermissions();
 
@@ -153,124 +131,40 @@ class CalendarSyncService {
       throw Exception('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。');
     }
 
-    final now = DateTime.now();
+    return _deleteGeneratedEventsInRangeForSemester(
+      calendarId: calendarId,
+      range: overwriteRangeFor(bundle),
+      semesterId: bundle.semesterId,
+    );
+  }
+
+  Future<int> _deleteGeneratedEventsInRangeForSemester({
+    required String calendarId,
+    required CalendarOverwriteRange range,
+    required String semesterId,
+  }) async {
+    final oldEvents = await DeviceCalendar.instance.listEvents(
+      range.start,
+      range.end,
+      calendarIds: [calendarId],
+    );
     var deleted = 0;
-
-    for (int i = -2; i <= 2; i++) {
-      final year = now.year + i;
-      final rangeStart = DateTime(year, 1, 1);
-      final rangeEnd = DateTime(year, 12, 31, 23, 59, 59);
-
-      try {
-        final events = await DeviceCalendar.instance.listEvents(
-          rangeStart,
-          rangeEnd,
-          calendarIds: [calendarId],
-        );
-
-        for (final event in events) {
-          final description = event.description ?? '';
-          if (!CalendarImportMetadata.parse(description).isGeneratedByApp) {
-            continue;
-          }
-
-          var targetId = event.eventId;
-          if (targetId.isEmpty) {
-            targetId = event.instanceId;
-          }
-
-          if (targetId.isEmpty) {
-            continue;
-          }
-
+    for (final event in oldEvents) {
+      if (CalendarImportMetadata.shouldDeleteForSemesterOverwrite(
+        description: event.description,
+        selectedSemesterId: semesterId,
+      )) {
+        var targetId = event.eventId;
+        if (targetId.isEmpty) {
+          targetId = event.instanceId;
+        }
+        if (targetId.isNotEmpty) {
           try {
             await DeviceCalendar.instance.deleteEvent(eventId: targetId);
             deleted += 1;
           } catch (_) {
             // 静默忽略单个日程删除失败的情况
           }
-        }
-      } catch (_) {
-        // 静默忽略某一年份查询失败的情况
-      }
-    }
-
-    return deleted;
-  }
-
-  Future<List<GeneratedEventsGroup>> scanGeneratedEventGroups() async {
-    final permission = await _ensurePermissions();
-
-    if (permission != CalendarPermissionStatus.granted) {
-      throw Exception('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。');
-    }
-
-    final calendars = await DeviceCalendar.instance.listCalendars();
-    final now = DateTime.now();
-    final importedEvents = <ImportedCalendarEvent>[];
-
-    for (final calendar in calendars) {
-      for (var i = -5; i <= 5; i++) {
-        final year = now.year + i;
-        final rangeStart = DateTime(year, 1, 1);
-        final rangeEnd = DateTime(year, 12, 31, 23, 59, 59);
-
-        final events = await DeviceCalendar.instance.listEvents(
-          rangeStart,
-          rangeEnd,
-          calendarIds: [calendar.id],
-        );
-
-        for (final event in events) {
-          final metadata = CalendarImportMetadata.parse(event.description);
-          if (!metadata.isGeneratedByApp) {
-            continue;
-          }
-
-          var deleteId = event.eventId;
-          if (deleteId.isEmpty) {
-            deleteId = event.instanceId;
-          }
-          if (deleteId.isEmpty) {
-            continue;
-          }
-
-          importedEvents.add(
-            ImportedCalendarEvent(
-              deleteId: deleteId,
-              calendarId: calendar.id,
-              calendarName: calendar.name,
-              description: event.description,
-            ),
-          );
-        }
-      }
-    }
-
-    return CalendarImportMetadata.groupGeneratedEvents(importedEvents);
-  }
-
-  Future<int> deleteGeneratedEventGroup(GeneratedEventsGroup group) {
-    return deleteGeneratedEventGroups([group]);
-  }
-
-  Future<int> deleteGeneratedEventGroups(
-    List<GeneratedEventsGroup> groups,
-  ) async {
-    final permission = await _ensurePermissions();
-
-    if (permission != CalendarPermissionStatus.granted) {
-      throw Exception('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。');
-    }
-
-    var deleted = 0;
-    for (final group in groups) {
-      for (final event in group.events) {
-        try {
-          await DeviceCalendar.instance.deleteEvent(eventId: event.deleteId);
-          deleted += 1;
-        } catch (_) {
-          // Ignore one failed deletion so cleanup can continue.
         }
       }
     }

@@ -216,33 +216,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
                 ? const Center(child: CircularProgressIndicator())
                 : WebViewWidget(controller: _controller),
           ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _initializing
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
-                      label: const Text('取消'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _initializing ? null : _manualComplete,
-                      icon: const Icon(Icons.login),
-                      label: const Text('我已完成登录'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );

@@ -2,7 +2,6 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:device_calendar_plus_platform_interface/device_calendar_plus_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_course.dart';
-import 'package:nju_calendar_importer_flutter/services/calendar_import_metadata.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_sync_service.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -136,11 +135,12 @@ Map<String, dynamic> importedCalendarEvent({
   required String description,
   String calendarId = 'target-calendar',
   DateTime? start,
+  String? instanceId,
 }) {
   final startDate = start ?? DateTime(2026, 3, 3);
   return {
     'eventId': id,
-    'instanceId': id,
+    'instanceId': instanceId ?? id,
     'calendarId': calendarId,
     'title': 'Old import',
     'description': description,
@@ -291,119 +291,117 @@ void main() {
     expect(fakePlatform.listEventCalls.single.calendarIds, ['target-calendar']);
   });
 
-  test('deleteImportedEvents deletes current and legacy generated events',
+  test('deleteGeneratedEventsForBundle deletes only current semester imports',
       () async {
-    final currentYear = DateTime.now().year;
+    final bundle = ScheduleBundle(
+      semesterId: '2025-2026-2',
+      semesterName: '2025-2026学年 第2学期',
+      semesterStart: DateTime(2026, 3, 2),
+      semesterEnd:
+          DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
+      courseCount: 0,
+      examCount: 0,
+      events: const [],
+    );
     fakePlatform.events = [
       importedCalendarEvent(
-        id: 'current-marker',
+        id: 'same-semester',
         description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
-        start: DateTime(currentYear, 3, 3),
+        start: DateTime(2026, 3, 3),
+      ),
+      importedCalendarEvent(
+        id: 'other-semester',
+        description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-1',
+        start: DateTime(2026, 3, 4),
       ),
       importedCalendarEvent(
         id: 'legacy-marker',
         description: '[NJU_SCHEDULE_IMPORT]\nimport_key=old',
-        start: DateTime(currentYear, 3, 4),
+        start: DateTime(2026, 3, 5),
       ),
       importedCalendarEvent(
-        id: 'manual',
+        id: 'other-calendar',
+        calendarId: 'other-calendar',
+        description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
+        start: DateTime(2026, 3, 6),
+      ),
+      importedCalendarEvent(
+        id: 'manual-event',
         description: 'manual event',
-        start: DateTime(currentYear, 3, 5),
+        start: DateTime(2026, 3, 7),
       ),
     ];
 
-    final deleted = await CalendarSyncService().deleteImportedEvents(
+    final deleted = await CalendarSyncService().deleteGeneratedEventsForBundle(
       calendarId: 'target-calendar',
+      bundle: bundle,
     );
 
     expect(deleted, 2);
-    expect(fakePlatform.deletedEventIds, [
-      'current-marker',
-      'legacy-marker',
-    ]);
+    expect(fakePlatform.deletedEventIds, ['same-semester', 'legacy-marker']);
+    expect(fakePlatform.listEventCalls.single.start, DateTime(2026, 3, 2));
+    expect(
+      fakePlatform.listEventCalls.single.end,
+      DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
+    );
+    expect(fakePlatform.listEventCalls.single.calendarIds, ['target-calendar']);
   });
 
-  test('scanGeneratedEventGroups groups generated events across calendars',
-      () async {
-    final currentYear = DateTime.now().year;
-    fakePlatform.calendars = [
-      {
-        'id': 'personal',
-        'name': 'Personal',
-        'readOnly': false,
-      },
-      {
-        'id': 'work',
-        'name': 'Work',
-        'readOnly': false,
-      },
-    ];
+  test('deleteGeneratedEventsForBundle falls back to instance id', () async {
+    final bundle = ScheduleBundle(
+      semesterId: '2025-2026-2',
+      semesterName: '2025-2026学年 第2学期',
+      semesterStart: DateTime(2026, 3, 2),
+      semesterEnd:
+          DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
+      courseCount: 0,
+      examCount: 0,
+      events: const [],
+    );
     fakePlatform.events = [
       importedCalendarEvent(
-        id: 'current-marker',
-        calendarId: 'personal',
+        id: '',
+        instanceId: 'instance-only',
         description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
-        start: DateTime(currentYear, 3, 3),
-      ),
-      importedCalendarEvent(
-        id: 'legacy-marker',
-        calendarId: 'work',
-        description: '[NJU_SCHEDULE_IMPORT]\nimport_key=old',
-        start: DateTime(currentYear, 4, 4),
-      ),
-      importedCalendarEvent(
-        id: 'manual',
-        calendarId: 'personal',
-        description: 'manual event',
-        start: DateTime(currentYear, 5, 5),
+        start: DateTime(2026, 3, 3),
       ),
     ];
 
-    final groups = await CalendarSyncService().scanGeneratedEventGroups();
+    final deleted = await CalendarSyncService().deleteGeneratedEventsForBundle(
+      calendarId: 'target-calendar',
+      bundle: bundle,
+    );
 
-    expect(groups.map((group) => group.label), [
-      '2025-2026-2',
-      CalendarImportMetadata.legacyGroupLabel,
-    ]);
-    expect(groups.first.events.single.deleteId, 'current-marker');
-    expect(groups.first.events.single.calendarName, 'Personal');
-    expect(groups.last.events.single.deleteId, 'legacy-marker');
-    expect(groups.last.events.single.calendarName, 'Work');
+    expect(deleted, 1);
+    expect(fakePlatform.deletedEventIds, ['instance-only']);
   });
 
-  test('deleteGeneratedEventGroups deletes every event in selected groups',
+  test('deleteGeneratedEventsForBundle requires full read permission',
       () async {
-    final deleted = await CalendarSyncService().deleteGeneratedEventGroups([
-      GeneratedEventsGroup(
-        semesterId: '2025-2026-2',
-        label: '2025-2026-2',
-        events: const [
-          ImportedCalendarEvent(
-            deleteId: 'current-marker',
-            calendarId: 'personal',
-            calendarName: 'Personal',
-            description: '[NJU_CALENDAR_IMPORTER]\nsemester_id=2025-2026-2',
-          ),
-        ],
-      ),
-      GeneratedEventsGroup(
-        semesterId: null,
-        label: CalendarImportMetadata.legacyGroupLabel,
-        events: const [
-          ImportedCalendarEvent(
-            deleteId: 'legacy-marker',
-            calendarId: 'work',
-            calendarName: 'Work',
-            description: '[NJU_SCHEDULE_IMPORT]',
-          ),
-        ],
-      ),
-    ]);
+    fakePlatform.permission = CalendarPermissionStatus.writeOnly;
+    final bundle = ScheduleBundle(
+      semesterId: '2025-2026-2',
+      semesterName: '2025-2026学年 第2学期',
+      semesterStart: DateTime(2026, 3, 2),
+      semesterEnd:
+          DateTime(2026, 7, 6).subtract(const Duration(milliseconds: 1)),
+      courseCount: 0,
+      examCount: 0,
+      events: const [],
+    );
 
-    expect(deleted, 2);
-    expect(fakePlatform.deletedEventIds, [
-      'current-marker',
-      'legacy-marker',
-    ]);
+    expect(
+      () => CalendarSyncService().deleteGeneratedEventsForBundle(
+        calendarId: 'target-calendar',
+        bundle: bundle,
+      ),
+      throwsA(
+        isA<Exception>().having(
+          (error) => error.toString(),
+          'message',
+          contains('当前权限只能写入，无法读取已有事件；请在系统设置中授予完整日历权限后再试。'),
+        ),
+      ),
+    );
   });
 }

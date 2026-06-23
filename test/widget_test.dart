@@ -7,13 +7,15 @@ import 'package:nju_calendar_importer_flutter/models/login_models.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_course.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_semester.dart';
 import 'package:nju_calendar_importer_flutter/models/school_type.dart';
-import 'package:nju_calendar_importer_flutter/pages/generated_events_cleanup_page.dart';
+import 'package:nju_calendar_importer_flutter/pages/web_login_page.dart';
 import 'package:nju_calendar_importer_flutter/services/auth_service.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_sync_service.dart';
 import 'package:nju_calendar_importer_flutter/services/nju_schedule_service.dart';
 import 'package:nju_calendar_importer_flutter/services/storage_service.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// ignore: depend_on_referenced_packages
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 class WidgetFakeCalendarPlatform extends DeviceCalendarPlusPlatform
     with MockPlatformInterfaceMixin {
@@ -189,7 +191,109 @@ class WidgetFakeScheduleService extends NjuScheduleService {
   }
 }
 
-class WidgetFakeCalendarSyncService extends CalendarSyncService {}
+class WidgetFakeCalendarSyncService extends CalendarSyncService {
+  WidgetFakeCalendarSyncService({
+    this.calendars = const [],
+    this.deletedCount = 3,
+  });
+
+  final List<Calendar> calendars;
+  final int deletedCount;
+  var deleteCalls = 0;
+  String? deletedCalendarId;
+  ScheduleBundle? deletedBundle;
+
+  @override
+  Future<List<Calendar>> listWritableCalendars() async => calendars;
+
+  @override
+  Future<int> deleteGeneratedEventsForBundle({
+    required String calendarId,
+    required ScheduleBundle bundle,
+  }) async {
+    deleteCalls += 1;
+    deletedCalendarId = calendarId;
+    deletedBundle = bundle;
+    return deletedCount;
+  }
+}
+
+class WidgetFakeWebViewPlatform extends WebViewPlatform {
+  @override
+  PlatformNavigationDelegate createPlatformNavigationDelegate(
+    PlatformNavigationDelegateCreationParams params,
+  ) {
+    return WidgetFakePlatformNavigationDelegate(params);
+  }
+
+  @override
+  PlatformWebViewController createPlatformWebViewController(
+    PlatformWebViewControllerCreationParams params,
+  ) {
+    return WidgetFakePlatformWebViewController(params);
+  }
+
+  @override
+  PlatformWebViewWidget createPlatformWebViewWidget(
+    PlatformWebViewWidgetCreationParams params,
+  ) {
+    return WidgetFakePlatformWebViewWidget(params);
+  }
+}
+
+class WidgetFakePlatformNavigationDelegate extends PlatformNavigationDelegate {
+  WidgetFakePlatformNavigationDelegate(
+    super.params,
+  ) : super.implementation();
+
+  @override
+  Future<void> setOnNavigationRequest(
+    NavigationRequestCallback onNavigationRequest,
+  ) async {}
+
+  @override
+  Future<void> setOnPageStarted(PageEventCallback onPageStarted) async {}
+
+  @override
+  Future<void> setOnPageFinished(PageEventCallback onPageFinished) async {}
+
+  @override
+  Future<void> setOnProgress(ProgressCallback onProgress) async {}
+
+  @override
+  Future<void> setOnWebResourceError(
+    WebResourceErrorCallback onWebResourceError,
+  ) async {}
+}
+
+class WidgetFakePlatformWebViewController extends PlatformWebViewController {
+  WidgetFakePlatformWebViewController(
+    super.params,
+  ) : super.implementation();
+
+  @override
+  Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
+
+  @override
+  Future<void> setPlatformNavigationDelegate(
+    PlatformNavigationDelegate handler,
+  ) async {}
+
+  @override
+  Future<void> loadRequest(LoadRequestParams params) async {}
+
+  @override
+  Future<void> reload() async {}
+}
+
+class WidgetFakePlatformWebViewWidget extends PlatformWebViewWidget {
+  WidgetFakePlatformWebViewWidget(super.params) : super.implementation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(key: Key('fake-webview'));
+  }
+}
 
 SessionInfo _undergradSession() {
   return const SessionInfo(
@@ -327,10 +431,8 @@ void main() {
       expect(find.text('2025-2026学年 第2学期'), findsOneWidget);
       expect(find.text('拉取所选学期课表'), findsOneWidget);
       expect(find.text('系统日历同步'), findsNothing);
-
-      final cleanupButton = find.widgetWithText(OutlinedButton, '扫描并删除导入日程');
-      expect(cleanupButton, findsOneWidget);
-      expect(tester.widget<OutlinedButton>(cleanupButton).onPressed, isNotNull);
+      expect(find.text('删除本软件生成的日程'), findsNothing);
+      expect(find.text('扫描并删除导入日程'), findsNothing);
     },
   );
 
@@ -364,6 +466,7 @@ void main() {
       expect(find.text('系统日历同步'), findsOneWidget);
       expect(find.text('已获取 2025-2026学年 第2学期'), findsOneWidget);
       expect(find.text('课程 1 门 · 考试 0 场 · 可导入 1 条'), findsOneWidget);
+      expect(find.text('删除当前学期导入日程'), findsOneWidget);
       expect(find.text('一键清空本应用导入事件'), findsNothing);
     },
   );
@@ -497,7 +600,7 @@ void main() {
     },
   );
 
-  testWidgets('cleanup card opens generated events cleanup page',
+  testWidgets('current-semester delete prompts when no calendar is selected',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({
       'privacy_policy_accepted_v1': true,
@@ -506,7 +609,9 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: HomePage(
-          authService: WidgetFakeAuthService(),
+          authService: WidgetFakeAuthService(
+            restoredSession: _undergradSession(),
+          ),
           scheduleService:
               WidgetFakeScheduleService(options: _semesterOptions()),
           calendarSyncService: WidgetFakeCalendarSyncService(),
@@ -515,9 +620,99 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('扫描并删除导入日程'));
+    await tester.tap(find.text('拉取所选学期课表'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.tap(deleteButton);
     await tester.pumpAndSettle();
 
-    expect(find.byType(GeneratedEventsCleanupPage), findsOneWidget);
+    expect(find.text('请先选择一个系统日历。'), findsOneWidget);
+  });
+
+  testWidgets(
+    'current-semester delete confirms before calling service',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'privacy_policy_accepted_v1': true,
+      });
+      final calendarSyncService = WidgetFakeCalendarSyncService(
+        calendars: const [
+          Calendar(id: 'target-calendar', name: '个人日历', readOnly: false),
+        ],
+        deletedCount: 3,
+      );
+      final options = _semesterOptions();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(
+            authService: WidgetFakeAuthService(
+              restoredSession: _undergradSession(),
+            ),
+            scheduleService: WidgetFakeScheduleService(options: options),
+            calendarSyncService: calendarSyncService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('拉取所选学期课表'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('加载手机日历'));
+      await tester.tap(find.widgetWithText(OutlinedButton, '加载手机日历'));
+      await tester.pumpAndSettle();
+
+      final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
+      await tester.ensureVisible(deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('删除当前学期导入日程'), findsWidgets);
+      expect(find.textContaining('2025-2026学年 第2学期'), findsWidgets);
+
+      await tester.tap(find.widgetWithText(TextButton, '取消'));
+      await tester.pumpAndSettle();
+
+      expect(calendarSyncService.deleteCalls, 0);
+
+      await tester.ensureVisible(deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '确认删除'));
+      await tester.pumpAndSettle();
+
+      expect(calendarSyncService.deleteCalls, 1);
+      expect(calendarSyncService.deletedCalendarId, 'target-calendar');
+      expect(calendarSyncService.deletedBundle?.semesterId, '2025-2026-2');
+      expect(find.text('已删除 3 条当前学期导入日程。'), findsOneWidget);
+    },
+  );
+
+  testWidgets('web login page removes footer buttons but keeps app bar actions',
+      (WidgetTester tester) async {
+    WebViewPlatform.instance = WidgetFakeWebViewPlatform();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WebLoginPage(
+          schoolType: SchoolType.undergrad,
+          authService: WidgetFakeAuthService(),
+          usernameHint: '',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('取消'), findsNothing);
+    expect(find.text('我已完成登录'), findsNothing);
+    expect(find.byIcon(Icons.refresh), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
+    expect(find.byKey(const Key('fake-webview')), findsOneWidget);
   });
 }

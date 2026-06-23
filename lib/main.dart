@@ -6,7 +6,6 @@ import 'models/login_models.dart';
 import 'models/nju_course.dart';
 import 'models/nju_semester.dart';
 import 'models/school_type.dart';
-import 'pages/generated_events_cleanup_page.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
 import 'services/calendar_sync_service.dart';
@@ -141,6 +140,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _loadingSchedule = false;
   bool _loadingCalendars = false;
   bool _syncingCalendar = false;
+  bool _deletingCurrentSemesterEvents = false;
   bool _permissionCheckRunning = false;
   bool _privacyAccepted = false;
   bool _privacyReady = false;
@@ -606,6 +606,66 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _deleteCurrentSemesterImportedEvents() async {
+    final bundle = _bundle;
+    final calendarId = _selectedCalendarId;
+
+    if (calendarId == null) {
+      _showSnackBar('请先选择一个系统日历。');
+      return;
+    }
+    if (bundle == null) {
+      _showSnackBar('请先拉取要清理的学期课表。');
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('删除当前学期导入日程'),
+            content: Text(
+              '将删除当前目标日历中 ${bundle.semesterName} 由本应用导入的日程。'
+              '其他学期带学期标记的导入日程不会被删除。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('确认删除'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!mounted || !confirmed) return;
+
+    setState(() {
+      _deletingCurrentSemesterEvents = true;
+    });
+    try {
+      final deleted = await _calendarSyncService.deleteGeneratedEventsForBundle(
+        calendarId: calendarId,
+        bundle: bundle,
+      );
+
+      if (!mounted) return;
+      _showSnackBar('已删除 $deleted 条当前学期导入日程。');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('删除当前学期导入日程失败：$e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deletingCurrentSemesterEvents = false;
+        });
+      }
+    }
+  }
+
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -645,8 +705,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         const SizedBox(height: 12),
                         _buildCalendarCard(),
                       ],
-                      const SizedBox(height: 12),
-                      _buildGeneratedEventsCleanupCard(),
                     ],
                   ),
                 ),
@@ -936,7 +994,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: _syncingCalendar ? null : _syncToCalendar,
+                    onPressed:
+                        _syncingCalendar || _deletingCurrentSemesterEvents
+                            ? null
+                            : _syncToCalendar,
                     icon: _syncingCalendar
                         ? const SizedBox(
                             width: 16,
@@ -949,39 +1010,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGeneratedEventsCleanupCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '删除本软件生成的日程',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
             const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => GeneratedEventsCleanupPage(
-                            calendarSyncService: _calendarSyncService,
-                          ),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.delete_sweep),
-                    label: const Text('扫描并删除导入日程'),
+                    onPressed:
+                        _syncingCalendar || _deletingCurrentSemesterEvents
+                            ? null
+                            : _deleteCurrentSemesterImportedEvents,
+                    icon: _deletingCurrentSemesterEvents
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_sweep),
+                    label: const Text('删除当前学期导入日程'),
                   ),
                 ),
               ],
