@@ -1,6 +1,7 @@
 import 'package:device_calendar_plus/device_calendar_plus.dart';
 
 import '../models/nju_course.dart';
+import 'calendar_import_metadata.dart';
 
 class CalendarOverwriteRange {
   const CalendarOverwriteRange({
@@ -13,14 +14,23 @@ class CalendarOverwriteRange {
 }
 
 class CalendarSyncService {
-  static const importMarker = '[NJU_SCHEDULE_IMPORT]';
+  static const importMarker = CalendarImportMetadata.currentMarker;
+  static const legacyImportMarker = CalendarImportMetadata.legacyMarker;
 
   static CalendarOverwriteRange overwriteRangeFor(ScheduleBundle bundle) {
+    if (bundle.semesterEnd.isAfter(bundle.semesterStart)) {
+      return CalendarOverwriteRange(
+        start: bundle.semesterStart,
+        end: bundle.semesterEnd,
+      );
+    }
+
     final earliest = bundle.earliestStart;
     final latest = bundle.latestEnd;
     if (earliest == null || latest == null) {
       throw StateError(
-          'Cannot calculate overwrite range for an empty schedule.');
+        'Cannot calculate overwrite range for an empty schedule.',
+      );
     }
 
     final firstDay = DateTime(earliest.year, earliest.month, earliest.day);
@@ -85,7 +95,10 @@ class CalendarSyncService {
 
       for (final event in oldEvents) {
         final description = event.description ?? '';
-        if (description.contains(importMarker)) {
+        if (CalendarImportMetadata.shouldDeleteForSemesterOverwrite(
+          description: description,
+          selectedSemesterId: bundle.semesterId,
+        )) {
           var targetId = event.eventId;
           if (targetId.isEmpty) {
             targetId = event.instanceId;
