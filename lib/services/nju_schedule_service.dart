@@ -94,13 +94,14 @@ class NjuScheduleService {
     required bool includeFinalExams,
   }) async {
     final current = await _fetchUndergradCurrentSemester(dio);
-    final allSemesters = await _fetchUndergradSemesterList(
-      dio,
-      currentSemesterId: current.$1,
-    );
-    final semester = allSemesters.firstWhere(
-      (item) => item.id == current.$1,
+    final allSemesterRows = await _fetchUndergradSemesterRows(dio);
+    final semesterRow = allSemesterRows.firstWhere(
+      (row) => _undergradSemesterIdFromRow(row) == current.$1,
       orElse: () => throw Exception('未找到当前学期的起始日期。'),
+    );
+    final semester = NjuSemester.fromUndergradRow(
+      semesterRow,
+      currentSemesterId: current.$1,
     );
 
     return _fetchUndergradForSemester(
@@ -135,6 +136,19 @@ class NjuScheduleService {
     Dio dio, {
     required String? currentSemesterId,
   }) async {
+    final allSemesterRows = await _fetchUndergradSemesterRows(dio);
+    return allSemesterRows
+        .map(
+          (row) => NjuSemester.fromUndergradRow(
+            row,
+            currentSemesterId: currentSemesterId,
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchUndergradSemesterRows(
+      Dio dio) async {
     final allSemesterResp = await dio.get<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/jshkcb/cxjcs.do',
     );
@@ -146,14 +160,13 @@ class NjuScheduleService {
       allSemesterData,
       ['datas', 'cxjcs', 'rows'],
     );
-    return allSemesterRows
-        .map(
-          (row) => NjuSemester.fromUndergradRow(
-            row,
-            currentSemesterId: currentSemesterId,
-          ),
-        )
-        .toList();
+    return allSemesterRows;
+  }
+
+  String _undergradSemesterIdFromRow(Map<String, dynamic> row) {
+    final year = '${row['XN'] ?? ''}'.trim();
+    final term = '${row['XQ'] ?? ''}'.trim();
+    return '$year-$term';
   }
 
   Future<ScheduleBundle> _fetchUndergradForSemester(
