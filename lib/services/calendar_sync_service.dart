@@ -14,9 +14,6 @@ class CalendarOverwriteRange {
 }
 
 class CalendarSyncService {
-  static const importMarker = CalendarImportMetadata.currentMarker;
-  static const legacyImportMarker = CalendarImportMetadata.legacyMarker;
-
   static CalendarOverwriteRange overwriteRangeFor(ScheduleBundle bundle) {
     if (bundle.semesterEnd.isAfter(bundle.semesterStart)) {
       return CalendarOverwriteRange(
@@ -84,8 +81,7 @@ class CalendarSyncService {
     String? warning;
 
     if (overwritePreviousImports &&
-        permission == CalendarPermissionStatus.granted &&
-        bundle.events.isNotEmpty) {
+        permission == CalendarPermissionStatus.granted) {
       final overwriteRange = overwriteRangeFor(bundle);
       final oldEvents = await DeviceCalendar.instance.listEvents(
         overwriteRange.start,
@@ -174,7 +170,9 @@ class CalendarSyncService {
 
         for (final event in events) {
           final description = event.description ?? '';
-          if (!description.contains(importMarker)) continue;
+          if (!CalendarImportMetadata.parse(description).isGeneratedByApp) {
+            continue;
+          }
 
           var targetId = event.eventId;
           if (targetId.isEmpty) {
