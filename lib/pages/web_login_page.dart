@@ -117,6 +117,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
               _currentUrl = url;
               if (_isAuthPage(url)) {
                 _status = '请在官方统一认证页面中完成登录…';
+                _autoFillDone = false;
               } else if (_isTargetArea(url)) {
                 _status = '已进入目标系统，正在检测登录态…';
               } else {
@@ -182,253 +183,321 @@ class _WebLoginPageState extends State<WebLoginPage> {
   /// not have injected the form into the DOM yet when onPageFinished fires.
   Future<void> _attemptAutoFill() async {
     debugPrint('[WebLoginPage] Attempting auto-fill. hasCredentials=${widget.hasCredentials}, autoFillDone=$_autoFillDone, autoFilling=$_autoFilling');
-    // Show why we might skip
     if (!widget.hasCredentials) {
       debugPrint('[WebLoginPage] Auto-fill skipped: no credentials in settings');
       if (mounted) {
-        setState(() => _status = '自动填充已跳过：hasCredentials=false '
-            '(user="${widget.autoFillUsername}", '
-            'pwd=${widget.autoFillPassword == null ? "null" : "len=${widget.autoFillPassword!.length}"})');
+        setState(() => _status = '自动填充已跳过：未配置账号密码');
       }
       return;
     }
     if (_autoFillDone || _autoFilling) {
       debugPrint('[WebLoginPage] Auto-fill skipped: done=$_autoFillDone, filling=$_autoFilling');
-      if (mounted) {
-        setState(() => _status = '自动填充已跳过：done=$_autoFillDone, filling=$_autoFilling');
-      }
       return;
     }
     _autoFilling = true;
+    _captchaSolving = false;
 
     if (mounted) {
-      setState(() => _status = '正在尝试自动填充（user="${widget.autoFillUsername}"）…');
+      setState(() => _status = '正在执行自动登录流程…');
     }
 
-    try {
-      const maxAttempts = 15;
+    final startTime = DateTime.now();
+    bool autofillSuccess = false;
+    String? solvedCaptchaText;
+    bool captchaRequired = false;
 
-      for (int attempt = 0; attempt < maxAttempts; attempt++) {
-        // Progressive delay: 300, 500, 700, ...
-        await Future.delayed(Duration(milliseconds: 300 + attempt * 200));
-        if (!mounted || _done || _autoFillDone) return;
+    // Task 1: Autofill username & password
+    Future<bool> doAutofill() async {
+      debugPrint('[WebLoginPage] Parallel: doAutofill started');
+      try {
+        const maxAttempts = 20; // 20 attempts * 50ms = 1.0s max
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+          if (!mounted || _done) return false;
 
-        // Step 1: Diagnose current page state and try to activate the form.
-        final diagResult = await _controller.runJavaScriptReturningResult('''
-          (function() {
-            var info = {};
-            // Check what elements exist
-            info.loginViewDiv = !!document.getElementById('loginViewDiv');
-            info.pwdLoginDiv = !!document.getElementById('pwdLoginDiv');
-            info.phoneLoginDiv = !!document.getElementById('phoneLoginDiv');
-            info.showTabFn = (typeof showTabHeadAndDiv === 'function');
-
-            // Count all username inputs
-            var allUserInputs = document.querySelectorAll('input[name="username"]');
-            info.totalUsernameInputs = allUserInputs.length;
-
-            // Check how many are visible
-            var visibleCount = 0;
-            for (var i = 0; i < allUserInputs.length; i++) {
-              var el = allUserInputs[i];
-              if (el.offsetParent !== null || (el.offsetWidth > 0 && el.offsetHeight > 0)) {
-                visibleCount++;
-              }
-            }
-            info.visibleUsernameInputs = visibleCount;
-
-            // Check #loginViewDiv content
-            var lv = document.getElementById('loginViewDiv');
-            info.loginViewDivChildCount = lv ? lv.children.length : -1;
-            info.loginViewDivInnerLength = lv ? lv.innerHTML.length : -1;
-
-            // Check #pwdLoginDiv display
-            var pwd = document.getElementById('pwdLoginDiv');
-            info.pwdLoginDivDisplay = pwd ? pwd.style.display : 'not-found';
-            info.pwdLoginDivHasForm = pwd ? !!pwd.querySelector('form') : false;
-
-            return JSON.stringify(info);
-          })();
-        ''');
-
-        final diagStr = diagResult.toString().replaceAll('"', '').replaceAll("'", '');
-        debugPrint('[WebLoginPage] Attempt $attempt diagnostics: $diagStr');
-
-        if (mounted) {
-          setState(() => _status = '诊断[$attempt]: $diagStr');
-        }
-
-        // Step 2: Try to activate the password login form.
-        // Strategy A: Call the page's own showTabHeadAndDiv function
-        // Strategy B: If that doesn't work, directly manipulate DOM visibility
-        await _controller.runJavaScript('''
-          (function() {
-            var lv = document.getElementById('loginViewDiv');
-            var hasVisibleInput = false;
-            if (lv) {
-              var inp = lv.querySelector('input[name="username"]');
-              if (inp && (inp.offsetParent !== null || inp.offsetWidth > 0)) {
-                hasVisibleInput = true;
-              }
-            }
-
-            if (!hasVisibleInput) {
-              // Strategy A: Use the page's own function
-              if (typeof showTabHeadAndDiv === 'function') {
-                try { showTabHeadAndDiv('userNameLogin', 1); } catch(e) {}
-              }
-
-              // Strategy B: If #loginViewDiv is still empty after a tick,
-              // directly move the pwd form content there
-              setTimeout(function() {
-                var lv2 = document.getElementById('loginViewDiv');
-                if (lv2 && lv2.children.length === 0) {
-                  var pwdDiv = document.getElementById('pwdLoginDiv');
-                  if (pwdDiv) {
-                    // Clone the inner content into loginViewDiv
-                    lv2.innerHTML = pwdDiv.innerHTML;
-                  }
-                }
-              }, 100);
-
-              // Strategy C: Also ensure pwdLoginDiv itself is not hidden
-              // so inputs inside it can have offsetParent
-              var pwdDiv = document.getElementById('pwdLoginDiv');
-              if (pwdDiv && pwdDiv.style.display === 'none') {
-                pwdDiv.style.display = '';
-              }
-            }
-          })();
-        ''');
-
-        // Wait for DOM manipulation to complete
-        await Future.delayed(const Duration(milliseconds: 600));
-        if (!mounted || _done || _autoFillDone) return;
-
-        // Step 3: Now try to fill ALL username inputs (both visible and
-        // invisible). We fill ALL of them because depending on the page state,
-        // the "active" form might be in #loginViewDiv OR #pwdLoginDiv.
-        final fillResult = await _controller.runJavaScriptReturningResult('''
-          (function() {
-            var filled = 0;
-            var allInputs = document.querySelectorAll('input[name="username"]');
-            for (var i = 0; i < allInputs.length; i++) {
-              var el = allInputs[i];
-              // Fill ALL of them — we don't know which one the page considers
-              // the "active" form, and filling a hidden one does no harm.
-              el.value = '${_escapeJs(widget.autoFillUsername ?? '')}';
-              el.dispatchEvent(new Event('input',  {bubbles:true}));
-              el.dispatchEvent(new Event('change', {bubbles:true}));
-              el.dispatchEvent(new Event('blur',   {bubbles:true}));
-              filled++;
-            }
-
-            // Also try #pwdFromId form's username specifically
-            var pwdForm = document.getElementById('pwdFromId');
-            if (pwdForm) {
-              var uInput = pwdForm.querySelector('input[name="username"]');
-              if (uInput && uInput.value !== '${_escapeJs(widget.autoFillUsername ?? '')}') {
-                uInput.value = '${_escapeJs(widget.autoFillUsername ?? '')}';
-                uInput.dispatchEvent(new Event('input',  {bubbles:true}));
-                uInput.dispatchEvent(new Event('change', {bubbles:true}));
-                filled++;
-              }
-            }
-
-            return filled;
-          })();
-        ''');
-
-        final filledCount =
-            int.tryParse(fillResult.toString().replaceAll('"', '')) ?? 0;
-        debugPrint('[WebLoginPage] Attempt $attempt filledCount: $filledCount');
-        if (filledCount == 0) continue; // No inputs found yet — retry
-
-        // Step 4: Fill password into ALL userPassword inputs.
-        if (widget.autoFillPassword != null &&
-            widget.autoFillPassword!.isNotEmpty) {
-          await _controller.runJavaScript('''
+          // Check if username input is available in DOM
+          final checkResult = await _controller.runJavaScriptReturningResult('''
             (function() {
-              // Fill all userPassword inputs
-              var inputs = document.querySelectorAll('input[name="userPassword"]');
-              for (var i = 0; i < inputs.length; i++) {
-                inputs[i].value = '${_escapeJs(widget.autoFillPassword!)}';
-                inputs[i].dispatchEvent(new Event('input',  {bubbles:true}));
-                inputs[i].dispatchEvent(new Event('change', {bubbles:true}));
+              var allUserInputs = document.querySelectorAll('input[name="username"]');
+              var visibleCount = 0;
+              for (var i = 0; i < allUserInputs.length; i++) {
+                var el = allUserInputs[i];
+                if (el.offsetParent !== null || (el.offsetWidth > 0 && el.offsetHeight > 0)) {
+                  visibleCount++;
+                }
               }
+              return visibleCount > 0;
+            })();
+          ''');
 
-              // Also try by ID
+          final hasVisibleInput = checkResult.toString().trim() == 'true';
+          if (!hasVisibleInput) {
+            // Activate password login form
+            await _controller.runJavaScript('''
+              (function() {
+                if (typeof showTabHeadAndDiv === 'function') {
+                  try { showTabHeadAndDiv('userNameLogin', 1); } catch(e) {}
+                }
+                var pwdDiv = document.getElementById('pwdLoginDiv');
+                if (pwdDiv && pwdDiv.style.display === 'none') {
+                  pwdDiv.style.display = '';
+                }
+                var lv = document.getElementById('loginViewDiv');
+                if (lv && lv.children.length === 0 && pwdDiv) {
+                  lv.innerHTML = pwdDiv.innerHTML;
+                }
+              })();
+            ''');
+            await Future.delayed(const Duration(milliseconds: 50));
+            continue;
+          }
+
+          // Visible input found! Fill username and password
+          final fillResult = await _controller.runJavaScriptReturningResult('''
+            (function() {
+              var filled = 0;
+              var uVal = '${_escapeJs(widget.autoFillUsername ?? '')}';
+              var pVal = '${_escapeJs(widget.autoFillPassword ?? '')}';
+              
+              // Fill all username inputs
+              document.querySelectorAll('input[name="username"]').forEach(function(el) {
+                el.value = uVal;
+                el.dispatchEvent(new Event('input',  {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+                el.dispatchEvent(new Event('blur',   {bubbles:true}));
+                filled++;
+              });
+
+              // Fill all password inputs
+              document.querySelectorAll('input[name="userPassword"]').forEach(function(el) {
+                el.value = pVal;
+                el.dispatchEvent(new Event('input',  {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+              });
+
               var pwdById = document.getElementById('password');
               if (pwdById && pwdById.type === 'password') {
-                pwdById.value = '${_escapeJs(widget.autoFillPassword!)}';
+                pwdById.value = pVal;
                 pwdById.dispatchEvent(new Event('input',  {bubbles:true}));
                 pwdById.dispatchEvent(new Event('change', {bubbles:true}));
               }
+
+              // Trigger checkUserCaptcha
+              if (typeof checkUserCaptcha === 'function') {
+                try { checkUserCaptcha(); } catch(e) {}
+              }
+
+              return filled;
             })();
           ''');
+
+          final count = int.tryParse(fillResult.toString().replaceAll('"', '').trim()) ?? 0;
+          if (count > 0) {
+            debugPrint('[WebLoginPage] Parallel: Autofill completed successfully. Filled $count inputs.');
+            autofillSuccess = true;
+            _autoFillDone = true;
+            if (mounted) {
+              setState(() {
+                _status = '账号密码已自动填充。';
+              });
+            }
+            return true;
+          }
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+      } catch (e) {
+        debugPrint('[WebLoginPage] Error in doAutofill: $e');
+      }
+      return false;
+    }
+
+    // Task 2: Poll captcha and solve it with LLM
+    Future<void> doCaptchaSolving() async {
+      debugPrint('[WebLoginPage] Parallel: doCaptchaSolving started. hasLlmConfig=${widget.hasLlmConfig}');
+      DateTime? autofillCompleteTime;
+      const pollInterval = Duration(milliseconds: 50);
+      final totalTimeout = widget.hasLlmConfig ? const Duration(seconds: 8) : const Duration(seconds: 2);
+
+      while (mounted && !_done) {
+        final now = DateTime.now();
+        if (now.difference(startTime) > totalTimeout) {
+          debugPrint('[WebLoginPage] Parallel captcha: timeout reached');
+          break;
         }
 
-        // Step 5: Trigger checkUserCaptcha
-        await _controller.runJavaScript('''
+        // Check if captcha is visible
+        final visCheck = await _controller.runJavaScriptReturningResult('''
           (function() {
-            if (typeof checkUserCaptcha === 'function') {
-              try { checkUserCaptcha(); } catch(e) {}
+            var divs = document.querySelectorAll('#captchaDiv');
+            var isVisible = false;
+            for (var i = 0; i < divs.length; i++) {
+              var cd = divs[i];
+              if (cd.offsetWidth > 0 && cd.offsetHeight > 0) {
+                isVisible = true;
+                break;
+              }
             }
+            if (!isVisible) return 'hidden';
+
+            // Try to extract image base64 if LLM is enabled
+            if (${widget.hasLlmConfig}) {
+              try {
+                var imgs = document.querySelectorAll('#captchaImg, .captcha-img img');
+                var visibleImg = null;
+                for (var i = 0; i < imgs.length; i++) {
+                  var img = imgs[i];
+                  if (img.offsetWidth > 0 && img.offsetHeight > 0) {
+                    visibleImg = img;
+                    break;
+                  }
+                }
+                if (visibleImg) {
+                  var src = visibleImg.src || '';
+                  // Ensure the src has a query parameter (indicating it's the dynamic captcha, not a placeholder)
+                  if (src.indexOf('?') === -1) {
+                    return 'visible_loading';
+                  }
+
+                  // Check if this src has already been solved/processed in this session
+                  if (window._lastCaptchaSrc === src) {
+                    return 'already_processed';
+                  }
+
+                  if (visibleImg.complete && (visibleImg.naturalWidth || visibleImg.width) > 0) {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = visibleImg.naturalWidth || visibleImg.width;
+                    canvas.height = visibleImg.naturalHeight || visibleImg.height;
+                    var ctx = canvas.getContext('2d');
+                    ctx.drawImage(visibleImg, 0, 0);
+                    var dataUrl = canvas.toDataURL('image/png');
+                    
+                    // Mark as processed
+                    window._lastCaptchaSrc = src;
+                    
+                    return 'base64:' + dataUrl.substring(dataUrl.indexOf(',') + 1);
+                  }
+                }
+              } catch(e) {}
+              return 'visible_loading';
+            }
+            return 'visible';
           })();
         ''');
 
-        _autoFillDone = true;
-        if (mounted) {
-          setState(() {
-            _status = '已自动填充账号密码（填充了$filledCount个输入框）。';
-          });
-        }
+        final statusStr = visCheck.toString().replaceAll('"', '').trim();
+        if (statusStr.startsWith('base64:')) {
+          captchaRequired = true;
+          final base64Image = statusStr.substring(7);
+          debugPrint('[WebLoginPage] Parallel captcha: Image loaded, base64 length = ${base64Image.length}');
+          
+          if (mounted) {
+            setState(() {
+              _status = '检测到验证码，正在使用 LLM 识别…';
+              _captchaSolving = true;
+            });
+          }
 
-        // Wait for checkUserCaptcha AJAX + captcha image load
-        await Future.delayed(const Duration(milliseconds: 2500));
-        if (!mounted || _done) return;
-
-        if (widget.hasLlmConfig) {
-          await _solveCaptchaAndLogin();
-        } else {
-          // If LLM is not configured, check if captcha is visible.
-          // If no captcha is needed, we can auto-submit.
-          final visResult = await _controller.runJavaScriptReturningResult('''
-            (function() {
-              var divs = document.querySelectorAll('#captchaDiv');
-              for (var i = 0; i < divs.length; i++) {
-                var cd = divs[i];
-                if (cd.offsetWidth > 0 && cd.offsetHeight > 0) {
-                  return 'visible';
-                }
-              }
-              return 'hidden';
-            })();
-          ''');
-
-          final isCaptchaVisible =
-              visResult.toString().replaceAll('"', '') == 'visible';
-
-          if (!isCaptchaVisible) {
+          try {
+            final imageBytes = Uint8List.fromList(base64Decode(base64Image));
+            final solver = CaptchaSolverService(
+              baseUrl: widget.llmBaseUrl!,
+              apiKey: widget.llmApiKey!,
+              model: widget.llmModel ?? 'auto',
+            );
+            solvedCaptchaText = await solver.solveCaptcha(imageBytes);
+            debugPrint('[WebLoginPage] Parallel captcha: Solved text = $solvedCaptchaText');
+            break; // Solved!
+          } catch (e) {
+            debugPrint('[WebLoginPage] Error during LLM captcha solving: $e');
             if (mounted) {
-              setState(() => _status = '无需验证码，正在自动登录…');
+              setState(() {
+                _status = '验证码识别出错：$e，请手动输入。';
+              });
             }
-            await _clickLogin();
-          } else {
-            if (mounted) {
-              setState(() => _status = '请手动输入验证码并点击登录。');
+            break; // Stop polling on solver error
+          } finally {
+            _captchaSolving = false;
+          }
+        } else if (statusStr == 'already_processed') {
+          debugPrint('[WebLoginPage] Parallel captcha: already processed this image src');
+          break;
+        } else if (statusStr == 'visible_loading') {
+          captchaRequired = true;
+          // Captcha is visible but image is not loaded yet, keep polling
+          debugPrint('[WebLoginPage] Parallel captcha: Visible but image loading...');
+        } else if (statusStr == 'visible') {
+          // Captcha is visible but LLM is not enabled
+          captchaRequired = true;
+          debugPrint('[WebLoginPage] Parallel captcha: Visible but LLM config is disabled');
+          break;
+        } else {
+          // Captcha is hidden
+          if (_autoFillDone) {
+            autofillCompleteTime ??= DateTime.now();
+            final waitDuration = widget.hasLlmConfig 
+                ? const Duration(milliseconds: 1000) 
+                : const Duration(milliseconds: 500);
+            if (DateTime.now().difference(autofillCompleteTime) > waitDuration) {
+              debugPrint('[WebLoginPage] Parallel captcha: No captcha required after wait post-autofill.');
+              break;
             }
           }
         }
 
-        return; // Done — no more retries needed
+        await Future.delayed(pollInterval);
       }
+    }
 
-      // All attempts exhausted without finding the input
-      if (mounted) {
-        setState(() {
-          _status = '自动填充未能找到输入框，请手动输入。';
-        });
+    try {
+      // Run both in parallel
+      await Future.wait([
+        doAutofill(),
+        doCaptchaSolving(),
+      ]);
+
+      if (!mounted || _done) return;
+
+      if (autofillSuccess) {
+        if (captchaRequired) {
+          if (solvedCaptchaText != null && solvedCaptchaText!.isNotEmpty) {
+            if (mounted) {
+              setState(() {
+                _status = '已识别验证码 ($solvedCaptchaText)，正在自动登录…';
+              });
+            }
+            final c = _escapeJs(solvedCaptchaText!);
+            await _controller.runJavaScript('''
+              (function() {
+                document.querySelectorAll('input[name="captcha"]').forEach(function(el) {
+                  el.value = '$c';
+                  el.dispatchEvent(new Event('input',  {bubbles:true}));
+                  el.dispatchEvent(new Event('change', {bubbles:true}));
+                });
+              })();
+            ''');
+            await Future.delayed(const Duration(milliseconds: 150));
+            await _clickLogin();
+          } else {
+            if (mounted) {
+              setState(() {
+                _status = '请手动输入验证码并点击登录。';
+              });
+            }
+          }
+        } else {
+          // No captcha required
+          if (mounted) {
+            setState(() {
+              _status = '无需验证码，正在自动登录…';
+            });
+          }
+          await _clickLogin();
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _status = '自动填充账号密码失败，请手动输入。';
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -438,135 +507,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
       }
     } finally {
       _autoFilling = false;
-    }
-  }
-
-  // --------------- Captcha solving ---------------
-
-  Future<void> _solveCaptchaAndLogin() async {
-    debugPrint('[WebLoginPage] Solving captcha...');
-    if (_captchaSolving || _done) return;
-    _captchaSolving = true;
-
-    try {
-      // Check whether any captcha div is visible (not hidden)
-      final visResult = await _controller.runJavaScriptReturningResult('''
-        (function() {
-          var divs = document.querySelectorAll('#captchaDiv');
-          for (var i = 0; i < divs.length; i++) {
-            var cd = divs[i];
-            if (cd.offsetWidth > 0 && cd.offsetHeight > 0) {
-              return 'visible';
-            }
-          }
-          return 'hidden';
-        })();
-      ''');
-
-      final isCaptchaVisible =
-          visResult.toString().replaceAll('"', '') == 'visible';
-      debugPrint('[WebLoginPage] Captcha visibility: $isCaptchaVisible');
-
-      if (!isCaptchaVisible) {
-        if (mounted) {
-          setState(() => _status = '未检测到验证码要求，尝试直接登录…');
-        }
-        await _clickLogin();
-        return;
-      }
-
-      if (mounted) {
-        setState(() => _status = '正在获取验证码图片…');
-      }
-
-      final b64Result = await _controller.runJavaScriptReturningResult('''
-        (function() {
-          try {
-            var imgs = document.querySelectorAll('#captchaImg, .captcha-img img');
-            var visibleImg = null;
-            for (var i = 0; i < imgs.length; i++) {
-              var img = imgs[i];
-              if (img.offsetWidth > 0 && img.offsetHeight > 0) {
-                visibleImg = img;
-                break;
-              }
-            }
-            if (visibleImg && visibleImg.complete && (visibleImg.naturalWidth || visibleImg.width) > 0) {
-              var canvas = document.createElement('canvas');
-              canvas.width = visibleImg.naturalWidth || visibleImg.width;
-              canvas.height = visibleImg.naturalHeight || visibleImg.height;
-              var ctx = canvas.getContext('2d');
-              ctx.drawImage(visibleImg, 0, 0);
-              var dataUrl = canvas.toDataURL('image/png');
-              return dataUrl.substring(dataUrl.indexOf(',') + 1);
-            }
-          } catch(e) {}
-
-          try {
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', '/authserver/getCaptcha.htl?' + Date.now(), false);
-            xhr.overrideMimeType('text/plain; charset=x-user-defined');
-            xhr.send(null);
-            if (xhr.status === 200) {
-              var bin = '';
-              var text = xhr.responseText;
-              for (var i = 0; i < text.length; i++) {
-                bin += String.fromCharCode(text.charCodeAt(i) & 0xff);
-              }
-              return btoa(bin);
-            }
-            return 'ERROR: xhr status ' + xhr.status;
-          } catch(e) { return 'ERROR: ' + e.toString(); }
-        })();
-      ''');
-
-      String base64Image = b64Result.toString().replaceAll('"', '').trim();
-      debugPrint('[WebLoginPage] Fetched captcha image base64 length: ${base64Image.length}');
-      if (base64Image.isEmpty || base64Image == 'null') {
-        throw Exception('无法获取验证码图片');
-      }
-      if (base64Image.startsWith('ERROR')) {
-        throw Exception('获取验证码图片错误: $base64Image');
-      }
-
-      if (mounted) {
-        setState(() => _status = '正在通过 LLM 识别验证码…');
-      }
-
-      // Decode and send to LLM
-      final imageBytes = Uint8List.fromList(base64Decode(base64Image));
-      final solver = CaptchaSolverService(
-        baseUrl: widget.llmBaseUrl!,
-        apiKey: widget.llmApiKey!,
-        model: widget.llmModel ?? 'auto',
-      );
-      final captchaText = await solver.solveCaptcha(imageBytes);
-      debugPrint('[WebLoginPage] Captcha solver result: $captchaText');
-
-      if (!mounted || _done) return;
-      setState(() => _status = '验证码识别结果：$captchaText，正在自动登录…');
-
-      // Fill captcha field (all matching inputs)
-      final c = _escapeJs(captchaText);
-      await _controller.runJavaScript('''
-        (function() {
-          document.querySelectorAll('input[name="captcha"]').forEach(function(el) {
-            el.value = '$c';
-            el.dispatchEvent(new Event('input',  {bubbles:true}));
-            el.dispatchEvent(new Event('change', {bubbles:true}));
-          });
-        })();
-      ''');
-
-      await Future.delayed(const Duration(milliseconds: 300));
-      await _clickLogin();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _status = '验证码自动识别失败：$e\n请手动输入验证码并登录。';
-      });
-    } finally {
-      _captchaSolving = false;
     }
   }
 
@@ -697,6 +637,15 @@ class _WebLoginPageState extends State<WebLoginPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+              trailing: _captchaSolving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : null,
             ),
           ),
           Expanded(

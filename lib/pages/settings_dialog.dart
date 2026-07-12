@@ -139,7 +139,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     _buildSectionHeader(
                       icon: Icons.person_outline,
                       title: '账号信息',
-                      subtitle: '预填后将在打开登录页时自动填充',
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -177,8 +176,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     // --- LLM Section ---
                     _buildSectionHeader(
                       icon: Icons.smart_toy_outlined,
-                      title: 'LLM 验证码识别',
-                      subtitle: '填写后将自动识别验证码并登录',
+                      title: '验证码识别（OpenAI 协议）',
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -237,21 +235,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           : const Icon(Icons.save_outlined),
                       label: const Text('保存设置'),
                     ),
-
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: Text(
-                        '所有信息仅保存在设备本地，不会上传至任何服务器。',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withAlpha(120),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -262,36 +245,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget _buildSectionHeader({
     required IconData icon,
     required String title,
-    required String subtitle,
   }) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
         const SizedBox(width: 8),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withAlpha(153),
-                ),
-              ),
-            ],
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],
