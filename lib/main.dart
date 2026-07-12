@@ -6,10 +6,12 @@ import 'models/login_models.dart';
 import 'models/nju_course.dart';
 import 'models/nju_semester.dart';
 import 'models/school_type.dart';
+import 'pages/settings_dialog.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
 import 'services/calendar_sync_service.dart';
 import 'services/nju_schedule_service.dart';
+import 'services/settings_service.dart';
 import 'services/storage_service.dart';
 
 void main() {
@@ -123,6 +125,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final AuthService _authService;
   late final NjuScheduleService _scheduleService;
   late final CalendarSyncService _calendarSyncService;
+  late final SettingsService _settingsService;
 
   SessionInfo? _session;
   ScheduleBundle? _bundle;
@@ -147,12 +150,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _privacyDialogShowing = false;
   bool _bootstrapDone = false;
 
+  AutoLoginSettings _autoLoginSettings = const AutoLoginSettings();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
     _storageService = StorageService();
+    _settingsService = SettingsService();
     _authService = widget.authService ?? AuthService(_storageService);
     _scheduleService =
         widget.scheduleService ?? NjuScheduleService(_authService);
@@ -180,6 +186,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final accepted = prefs.getBool(_privacyAcceptedKey) ?? false;
 
+    // Load auto-login settings
+    await _loadAutoLoginSettings();
+
     if (!mounted) return;
 
     setState(() {
@@ -193,6 +202,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     await _showPrivacyConsentDialog();
+  }
+
+  Future<void> _loadAutoLoginSettings() async {
+    try {
+      final settings = await _settingsService.loadAll();
+      if (!mounted) return;
+      setState(() {
+        _autoLoginSettings = settings;
+      });
+    } catch (_) {
+      // Silently fail — settings are optional
+    }
+  }
+
+  Future<void> _openSettingsDialog() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => SettingsDialog(settingsService: _settingsService),
+    );
+    if (saved == true) {
+      await _loadAutoLoginSettings();
+      if (mounted) {
+        _showSnackBar('设置已保存。');
+      }
+    }
   }
 
   Future<void> _continueAfterPrivacyAccepted() async {
@@ -372,7 +406,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           builder: (_) => WebLoginPage(
             schoolType: _schoolType,
             authService: _authService,
-            usernameHint: '',
+            usernameHint: _autoLoginSettings.username,
+            autoFillUsername: _autoLoginSettings.hasCredentials
+                ? _autoLoginSettings.username
+                : null,
+            autoFillPassword: _autoLoginSettings.hasCredentials
+                ? _autoLoginSettings.password
+                : null,
+            llmBaseUrl: _autoLoginSettings.hasLlmConfig
+                ? _autoLoginSettings.llmBaseUrl
+                : null,
+            llmApiKey: _autoLoginSettings.hasLlmConfig
+                ? _autoLoginSettings.llmApiKey
+                : null,
+            llmModel: _autoLoginSettings.hasLlmConfig
+                ? _autoLoginSettings.llmModel
+                : null,
           ),
         ),
       );
@@ -682,6 +731,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             tooltip: '隐私政策',
             onPressed: _openPrivacyPolicyPage,
             icon: const Icon(Icons.privacy_tip_outlined),
+          ),
+          IconButton(
+            tooltip: '设置',
+            onPressed: _openSettingsDialog,
+            icon: const Icon(Icons.settings_outlined),
           ),
         ],
       ),
