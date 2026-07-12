@@ -20,6 +20,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   final _llmApiKeyController = TextEditingController();
   final _llmModelController = TextEditingController();
 
+  String _captchaMode = 'ocr';
   bool _loading = true;
   bool _saving = false;
   bool _obscurePassword = true;
@@ -40,6 +41,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _llmBaseUrlController.text = settings.llmBaseUrl;
       _llmApiKeyController.text = settings.llmApiKey;
       _llmModelController.text = settings.llmModel;
+      setState(() {
+        _captchaMode = settings.captchaMode;
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -66,6 +70,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         llmBaseUrl: _llmBaseUrlController.text.trim(),
         llmApiKey: _llmApiKeyController.text.trim(),
         llmModel: _llmModelController.text.trim(),
+        captchaMode: _captchaMode,
       ));
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -173,53 +178,79 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
                     const SizedBox(height: 24),
 
-                    // --- LLM Section ---
+                    // --- Captcha Section ---
                     _buildSectionHeader(
-                      icon: Icons.smart_toy_outlined,
-                      title: '验证码识别（OpenAI 协议）',
+                      icon: Icons.abc_outlined,
+                      title: '验证码识别方式',
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: _llmBaseUrlController,
-                      decoration: const InputDecoration(
-                        labelText: 'Base URL',
-                        prefixIcon: Icon(Icons.link),
-                        hintText: 'https://api.openai.com',
+                    SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment<String>(
+                            value: 'ocr',
+                            label: Text('内置 OCR'),
+                            icon: Icon(Icons.center_focus_strong_outlined),
+                          ),
+                          ButtonSegment<String>(
+                            value: 'vlm',
+                            label: Text('云端 VLM'),
+                            icon: Icon(Icons.cloud_outlined),
+                          ),
+                        ],
+                        selected: {_captchaMode},
+                        onSelectionChanged: (newSelection) {
+                          setState(() {
+                            _captchaMode = newSelection.first;
+                          });
+                        },
                       ),
-                      keyboardType: TextInputType.url,
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _llmApiKeyController,
-                      obscureText: _obscureApiKey,
-                      decoration: InputDecoration(
-                        labelText: 'API Key',
-                        prefixIcon: const Icon(Icons.key_outlined),
-                        hintText: 'sk-...',
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            setState(() {
-                              _obscureApiKey = !_obscureApiKey;
-                            });
-                          },
-                          icon: Icon(
-                            _obscureApiKey
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
+                    if (_captchaMode == 'vlm') ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _llmBaseUrlController,
+                        decoration: const InputDecoration(
+                          labelText: 'Base URL',
+                          prefixIcon: Icon(Icons.link),
+                          hintText: 'https://api.openai.com',
+                        ),
+                        keyboardType: TextInputType.url,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _llmApiKeyController,
+                        obscureText: _obscureApiKey,
+                        decoration: InputDecoration(
+                          labelText: 'API Key',
+                          prefixIcon: const Icon(Icons.key_outlined),
+                          hintText: 'sk-...',
+                          suffixIcon: IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _obscureApiKey = !_obscureApiKey;
+                              });
+                            },
+                            icon: Icon(
+                              _obscureApiKey
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _llmModelController,
-                      decoration: const InputDecoration(
-                        labelText: 'Model',
-                        prefixIcon: Icon(Icons.psychology_outlined),
-                        hintText: 'auto',
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _llmModelController,
+                        decoration: const InputDecoration(
+                          labelText: 'Model',
+                          prefixIcon: Icon(Icons.psychology_outlined),
+                          hintText: 'auto',
+                        ),
+                        keyboardType: TextInputType.text,
                       ),
-                      keyboardType: TextInputType.text,
-                    ),
+                    ],
 
                     const SizedBox(height: 24),
 

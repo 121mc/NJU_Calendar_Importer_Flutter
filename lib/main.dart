@@ -422,6 +422,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             llmModel: _autoLoginSettings.hasLlmConfig
                 ? _autoLoginSettings.llmModel
                 : null,
+            captchaMode: _autoLoginSettings.captchaMode,
           ),
         ),
       );

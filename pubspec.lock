@@ -222,6 +222,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "5.0.0"
+  flutter_onnxruntime:
+    dependency: "direct main"
+    description:
+      name: flutter_onnxruntime
+      sha256: "616f0e296840edb63278c647baf4475232d21cba45478ff26348e474f3f6a913"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.8.0"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -305,7 +313,7 @@ packages:
     source: hosted
     version: "4.1.2"
   image:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: image
       sha256: "6300175e00616bbc832e2fc91bfa4d776af5402c81c7151bee6905bb08473c52"

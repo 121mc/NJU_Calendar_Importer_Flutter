@@ -8,6 +8,7 @@ import '../models/login_models.dart';
 import '../models/school_type.dart';
 import '../services/auth_service.dart';
 import '../services/captcha_solver_service.dart';
+import '../services/ocr_solver_service.dart';
 
 class WebLoginPage extends StatefulWidget {
   const WebLoginPage({
@@ -20,6 +21,7 @@ class WebLoginPage extends StatefulWidget {
     this.llmBaseUrl,
     this.llmApiKey,
     this.llmModel,
+    this.captchaMode = 'ocr',
   });
 
   final SchoolType schoolType;
@@ -35,6 +37,9 @@ class WebLoginPage extends StatefulWidget {
   final String? llmApiKey;
   final String? llmModel;
 
+  /// Captcha recognition mode: 'ocr' or 'vlm'
+  final String captchaMode;
+
   bool get hasCredentials =>
       (autoFillUsername != null && autoFillUsername!.isNotEmpty) ||
       (autoFillPassword != null && autoFillPassword!.isNotEmpty);
@@ -44,6 +49,9 @@ class WebLoginPage extends StatefulWidget {
       llmBaseUrl!.isNotEmpty &&
       llmApiKey != null &&
       llmApiKey!.isNotEmpty;
+
+  bool get isAutoCaptchaSupported =>
+      captchaMode == 'ocr' || (captchaMode == 'vlm' && hasLlmConfig);
 
   @override
   State<WebLoginPage> createState() => _WebLoginPageState();
@@ -98,7 +106,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   }
 
   Future<void> _init() async {
-    debugPrint('[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}, hasLlmConfig=${widget.hasLlmConfig}');
+    debugPrint('[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}, captchaMode=${widget.captchaMode}, isAutoCaptchaSupported=${widget.isAutoCaptchaSupported}');
     await widget.authService.clearWebViewCookies();
 
     _controller = WebViewController()
@@ -310,12 +318,12 @@ class _WebLoginPageState extends State<WebLoginPage> {
       return false;
     }
 
-    // Task 2: Poll captcha and solve it with LLM
+    // Poll captcha and solve it
     Future<void> doCaptchaSolving() async {
-      debugPrint('[WebLoginPage] Parallel: doCaptchaSolving started. hasLlmConfig=${widget.hasLlmConfig}');
+      debugPrint('[WebLoginPage] Parallel: doCaptchaSolving started. mode=${widget.captchaMode}, isAutoCaptchaSupported=${widget.isAutoCaptchaSupported}');
       DateTime? autofillCompleteTime;
       const pollInterval = Duration(milliseconds: 50);
-      final totalTimeout = widget.hasLlmConfig ? const Duration(seconds: 8) : const Duration(seconds: 2);
+      final totalTimeout = widget.isAutoCaptchaSupported ? const Duration(seconds: 8) : const Duration(seconds: 2);
 
       while (mounted && !_done) {
         final now = DateTime.now();
@@ -338,8 +346,8 @@ class _WebLoginPageState extends State<WebLoginPage> {
             }
             if (!isVisible) return 'hidden';
 
-            // Try to extract image base64 if LLM is enabled
-            if (${widget.hasLlmConfig}) {
+            // Try to extract image base64 if auto captcha is supported
+            if (${widget.isAutoCaptchaSupported}) {
               try {
                 var imgs = document.querySelectorAll('#captchaImg, .captcha-img img');
                 var visibleImg = null;
@@ -391,23 +399,27 @@ class _WebLoginPageState extends State<WebLoginPage> {
           
           if (mounted) {
             setState(() {
-              _status = '检测到验证码，正在使用 LLM 识别…';
+              _status = widget.captchaMode == 'vlm' ? '检测到验证码，正在使用 LLM 识别…' : '检测到验证码，正在使用内置 OCR 识别…';
               _captchaSolving = true;
             });
           }
 
           try {
             final imageBytes = Uint8List.fromList(base64Decode(base64Image));
-            final solver = CaptchaSolverService(
-              baseUrl: widget.llmBaseUrl!,
-              apiKey: widget.llmApiKey!,
-              model: widget.llmModel ?? 'auto',
-            );
-            solvedCaptchaText = await solver.solveCaptcha(imageBytes);
+            if (widget.captchaMode == 'vlm') {
+              final solver = CaptchaSolverService(
+                baseUrl: widget.llmBaseUrl!,
+                apiKey: widget.llmApiKey!,
+                model: widget.llmModel ?? 'auto',
+              );
+              solvedCaptchaText = await solver.solveCaptcha(imageBytes);
+            } else {
+              solvedCaptchaText = await OcrSolverService.solve(imageBytes);
+            }
             debugPrint('[WebLoginPage] Parallel captcha: Solved text = $solvedCaptchaText');
             break; // Solved!
           } catch (e) {
-            debugPrint('[WebLoginPage] Error during LLM captcha solving: $e');
+            debugPrint('[WebLoginPage] Error during captcha solving: $e');
             if (mounted) {
               setState(() {
                 _status = '验证码识别出错：$e，请手动输入。';
@@ -433,7 +445,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
           // Captcha is hidden
           if (_autoFillDone) {
             autofillCompleteTime ??= DateTime.now();
-            final waitDuration = widget.hasLlmConfig 
+            final waitDuration = widget.isAutoCaptchaSupported 
                 ? const Duration(milliseconds: 1000) 
                 : const Duration(milliseconds: 500);
             if (DateTime.now().difference(autofillCompleteTime) > waitDuration) {

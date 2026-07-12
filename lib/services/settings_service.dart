@@ -9,6 +9,7 @@ class SettingsService {
   static const _keyLlmBaseUrl = 'settings_llm_base_url';
   static const _keyLlmApiKey = 'settings_llm_api_key';
   static const _keyLlmModel = 'settings_llm_model';
+  static const _keyCaptchaMode = 'settings_captcha_mode';
 
   Future<String> getUsername() async {
     try {
@@ -65,6 +66,17 @@ class SettingsService {
     }
   }
 
+  Future<String> getCaptchaMode() async {
+    try {
+      return await _storage.read(key: _keyCaptchaMode) ?? 'ocr';
+    } catch (_) {
+      try {
+        await _storage.delete(key: _keyCaptchaMode);
+      } catch (_) {}
+      return 'ocr';
+    }
+  }
+
   Future<void> setUsername(String value) async =>
       await _storage.write(key: _keyUsername, value: value);
 
@@ -80,6 +92,9 @@ class SettingsService {
   Future<void> setLlmModel(String value) async =>
       await _storage.write(key: _keyLlmModel, value: value);
 
+  Future<void> setCaptchaMode(String value) async =>
+      await _storage.write(key: _keyCaptchaMode, value: value);
+
   Future<AutoLoginSettings> loadAll() async {
     final results = await Future.wait([
       getUsername(),
@@ -87,6 +102,7 @@ class SettingsService {
       getLlmBaseUrl(),
       getLlmApiKey(),
       getLlmModel(),
+      getCaptchaMode(),
     ]);
     return AutoLoginSettings(
       username: results[0],
@@ -94,6 +110,7 @@ class SettingsService {
       llmBaseUrl: results[2],
       llmApiKey: results[3],
       llmModel: results[4],
+      captchaMode: results[5],
     );
   }
 
@@ -104,6 +121,7 @@ class SettingsService {
       setLlmBaseUrl(settings.llmBaseUrl),
       setLlmApiKey(settings.llmApiKey),
       setLlmModel(settings.llmModel),
+      setCaptchaMode(settings.captchaMode),
     ]);
   }
 }
@@ -115,6 +133,7 @@ class AutoLoginSettings {
     this.llmBaseUrl = '',
     this.llmApiKey = '',
     this.llmModel = 'auto',
+    this.captchaMode = 'ocr',
   });
 
   final String username;
@@ -122,6 +141,7 @@ class AutoLoginSettings {
   final String llmBaseUrl;
   final String llmApiKey;
   final String llmModel;
+  final String captchaMode;
 
   bool get hasCredentials => username.isNotEmpty || password.isNotEmpty;
   bool get hasLlmConfig => llmBaseUrl.isNotEmpty && llmApiKey.isNotEmpty;
