@@ -107,7 +107,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
 
   Future<void> _init() async {
     debugPrint('[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}, captchaMode=${widget.captchaMode}, isAutoCaptchaSupported=${widget.isAutoCaptchaSupported}');
-    await widget.authService.clearWebViewCookies();
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -174,14 +173,32 @@ class _WebLoginPageState extends State<WebLoginPage> {
             });
           },
         ),
-      )
-      ..loadRequest(Uri.parse(_loginEntryUrl));
+      );
+
+    // Build the WebViewWidget first so the native view is created
+    if (mounted) {
+      setState(() {
+        _initializing = false;
+      });
+    }
+    
+    // Wait for the next frame so the platform view has a chance to initialize
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    try {
+      await widget.authService.clearWebViewCookies().timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('[WebLoginPage] Error clearing cookies: $e');
+    }
 
     if (!mounted) return;
-    setState(() {
-      _initializing = false;
-      _status = '请在下方官方页面中完成统一认证登录。';
-    });
+    await _controller.loadRequest(Uri.parse(_loginEntryUrl));
+
+    if (mounted) {
+      setState(() {
+        _status = '请在下方官方页面中完成统一认证登录。';
+      });
+    }
   }
 
   // --------------- Auto-fill logic ---------------
