@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_snack_bar.dart';
 import '../services/settings_service.dart';
 
 /// A card dialog displayed in the center of the screen for configuring
@@ -46,9 +47,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载保存设置失败：$e')),
-        );
+        showAppSnackBar(context, '加载保存设置失败：$e');
       }
     } finally {
       if (mounted) {
@@ -76,9 +75,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败：$e')),
-      );
+      showAppSnackBar(context, '保存失败：$e');
     } finally {
       if (mounted) {
         setState(() {

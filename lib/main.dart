@@ -2,11 +2,13 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_snack_bar.dart';
 import 'models/login_models.dart';
 import 'models/nju_course.dart';
 import 'models/nju_semester.dart';
 import 'models/school_type.dart';
 import 'pages/settings_dialog.dart';
+import 'privacy_policy.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
 import 'services/calendar_sync_service.dart';
@@ -21,82 +23,101 @@ void main() {
 class NjuScheduleCalendarApp extends StatelessWidget {
   const NjuScheduleCalendarApp({super.key});
 
+  ThemeData _buildTheme(Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF0B5CFF),
+      brightness: brightness,
+      primary: isDark ? const Color(0xFFAEC6FF) : const Color(0xFF0B5CFF),
+    );
+    final scaffoldColor =
+        isDark ? const Color(0xFF111318) : const Color(0xFFF5F6FA);
+    final foregroundColor =
+        isDark ? colorScheme.onSurface : const Color(0xFF202124);
+
+    return ThemeData(
+      brightness: brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: scaffoldColor,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scaffoldColor,
+        foregroundColor: foregroundColor,
+        elevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: foregroundColor,
+          fontSize: 30,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      cardTheme: CardThemeData(
+        color: isDark ? const Color(0xFF1B1D23) : Colors.white,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(26),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: colorScheme.primary,
+          foregroundColor: isDark ? colorScheme.onPrimary : Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: colorScheme.primary,
+          minimumSize: const Size.fromHeight(52),
+          side: BorderSide(color: colorScheme.primary, width: 1.2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: Colors.black,
+        contentTextStyle: TextStyle(color: Colors.white),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: isDark ? const Color(0xFF24262D) : const Color(0xFFF1F2F4),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide(color: colorScheme.primary, width: 1.2),
+        ),
+      ),
+      useMaterial3: true,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '呢喃课表导入',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0B5CFF),
-          primary: const Color(0xFF0B5CFF),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF5F6FA),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF5F6FA),
-          foregroundColor: Color(0xFF202124),
-          elevation: 0,
-          centerTitle: false,
-          titleTextStyle: TextStyle(
-            color: Color(0xFF202124),
-            fontSize: 30,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(26),
-          ),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF0B5CFF),
-            foregroundColor: Colors.white,
-            minimumSize: const Size.fromHeight(52),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-            ),
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF0B5CFF),
-            minimumSize: const Size.fromHeight(52),
-            side: const BorderSide(color: Color(0xFF0B5CFF), width: 1.2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-            ),
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFFF1F2F4),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: const BorderSide(color: Color(0xFF0B5CFF), width: 1.2),
-          ),
-        ),
-        useMaterial3: true,
-      ),
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }
@@ -119,7 +140,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  static const _privacyAcceptedKey = 'privacy_policy_accepted_v1';
+  static const _privacyAcceptedKey = 'privacy_policy_accepted_v2';
 
   late final StorageService _storageService;
   late final AuthService _authService;
@@ -250,8 +271,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               content: const SingleChildScrollView(
                 child: Text(
                   '欢迎使用“呢喃课表导入”。\n\n'
-                  '在你使用本应用前，请先阅读并同意《隐私政策》。本应用主要提供课表导入系统日历功能。为实现该功能，本应用会在你主动操作时访问官方登录页面，并在获得你授权后申请日历权限，以便读取系统日历列表、写入课表事件以及清理本应用此前导入的数据。\n\n'
-                  '本应用不包含广告、不包含内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。相关数据仅在你的设备本地处理，并仅在访问官方系统时与学校服务器通信。',
+                  '隐私政策已更新。新版政策补充说明了本地保存的登录信息、课表与日历数据处理方式，以及使用可选云端 VLM 验证码识别功能时的数据传输情况。\n\n'
+                  '请阅读并同意新版《隐私政策》后继续使用。本应用不包含广告或内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。',
                 ),
               ),
               actions: [
@@ -717,9 +738,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    showAppSnackBar(context, message);
   }
 
   @override
@@ -1102,80 +1121,10 @@ class PrivacyPolicyPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('隐私政策'),
       ),
-      body: SafeArea(
+      body: const SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text(
-                '呢喃课表导入隐私政策',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 12),
-              Text('生效日期：2026-03-03'),
-              SizedBox(height: 16),
-              Text(
-                '1. 应用基本说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用用于帮助呢喃学生将课表与考试信息导入手机系统日历。本应用不提供社交、广告、支付或个性化推荐功能。'),
-              Text('本项目是个人开发项目，与位于江苏省南京市的任何大学均无关。'),
-              SizedBox(height: 16),
-              Text(
-                '2. 我们处理的信息',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('为了实现课表导入功能，本应用可能在你主动操作时处理以下信息：'),
-              Text('• 你在官方统一认证页面输入并完成认证所需的信息。'),
-              Text('• 从官方系统返回的课表、考试、上课地点、教师等信息。'),
-              Text('• 你授权后可访问的系统日历列表与本应用写入的日历事件。'),
-              SizedBox(height: 16),
-              Text(
-                '3. 权限使用说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用会在获得你授权后申请日历权限，用于：'),
-              Text('• 读取系统日历列表，供你选择导入目标日历；'),
-              Text('• 将课表和考试信息写入系统日历；'),
-              Text('• 删除本应用此前导入的旧事件，避免重复。'),
-              SizedBox(height: 16),
-              Text(
-                '4. 数据传输与存储',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用不会将你的课表、日历内容或账号信息上传到开发者自建服务器。'),
-              Text('本应用仅在你使用登录和课表拉取功能时，与官方系统进行网络通信。'),
-              Text('必要的登录态、设置项或功能状态仅保存在你的设备本地，用于保证功能正常运行。'),
-              SizedBox(height: 16),
-              Text(
-                '5. 第三方服务说明',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('本应用依赖设备系统提供的日历能力，并通过应用内网页访问官方认证与课表系统。'),
-              SizedBox(height: 16),
-              Text(
-                '6. 你的权利',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('你可以拒绝授予日历权限，但届时将无法使用系统日历同步功能。'),
-              Text('你可以在系统设置中关闭日历权限，或在应用内清除本应用导入的日历事件。'),
-              SizedBox(height: 16),
-              Text(
-                '7. 联系方式',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 8),
-              Text('维护者：mc_121'),
-              Text('联系邮箱：mc_121_@outlook.com'),
-            ],
-          ),
+          padding: EdgeInsets.all(16),
+          child: SelectableText(privacyPolicyText),
         ),
       ),
     );

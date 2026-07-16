@@ -2,6 +2,7 @@ import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:device_calendar_plus_platform_interface/device_calendar_plus_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nju_calendar_importer_flutter/app_snack_bar.dart';
 import 'package:nju_calendar_importer_flutter/main.dart';
 import 'package:nju_calendar_importer_flutter/models/login_models.dart';
 import 'package:nju_calendar_importer_flutter/models/nju_course.dart';
@@ -401,13 +402,46 @@ void main() {
 
     expect(find.byType(MaterialApp), findsOneWidget);
     expect(find.byType(HomePage), findsOneWidget);
+
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, ThemeMode.system);
+    expect(app.theme?.brightness, Brightness.light);
+    expect(app.darkTheme?.brightness, Brightness.dark);
+    expect(app.theme?.snackBarTheme.backgroundColor, Colors.black);
+    expect(app.darkTheme?.snackBarTheme.backgroundColor, Colors.black);
+  });
+
+  testWidgets('new app log immediately replaces the current one', (
+    WidgetTester tester,
+  ) async {
+    late BuildContext appContext;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            appContext = context;
+            return const Scaffold(body: SizedBox());
+          },
+        ),
+      ),
+    );
+
+    showAppSnackBar(appContext, '第一条日志');
+    await tester.pump();
+    expect(find.text('第一条日志'), findsOneWidget);
+
+    showAppSnackBar(appContext, '第二条日志');
+    await tester.pump();
+    expect(find.text('第一条日志'), findsNothing);
+    expect(find.text('第二条日志'), findsOneWidget);
   });
 
   testWidgets(
     'restored undergrad session shows semester picker before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -440,7 +474,7 @@ void main() {
     'fetching selected undergrad semester reveals calendar sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -475,7 +509,7 @@ void main() {
     'undergrad current-semester fallback warns before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final scheduleService = WidgetFakeScheduleService(
         options: _semesterOptionsWithMissingCurrent(),
@@ -504,7 +538,7 @@ void main() {
     'selecting a non-current undergrad semester forwards full fetch arguments',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -542,7 +576,7 @@ void main() {
     'restored graduate session keeps current-semester auto fetch',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -571,7 +605,7 @@ void main() {
     'empty selected undergrad semester shows dialog without sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(
@@ -603,7 +637,7 @@ void main() {
   testWidgets('current-semester delete prompts when no calendar is selected',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_v1': true,
+      'privacy_policy_accepted_v2': true,
     });
 
     await tester.pumpWidget(
@@ -637,7 +671,7 @@ void main() {
     'current-semester delete confirms before calling service',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v1': true,
+        'privacy_policy_accepted_v2': true,
       });
       final calendarSyncService = WidgetFakeCalendarSyncService(
         calendars: const [
