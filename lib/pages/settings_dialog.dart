@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../app_snack_bar.dart';
+import '../models/school_type.dart';
 import '../services/settings_service.dart';
 
-/// A card dialog displayed in the center of the screen for configuring
-/// auto-login credentials and LLM captcha recognition settings.
+/// A card dialog for configuring credentials used by automatic login.
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({super.key, required this.settingsService});
 
@@ -17,15 +17,10 @@ class SettingsDialog extends StatefulWidget {
 class _SettingsDialogState extends State<SettingsDialog> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _llmBaseUrlController = TextEditingController();
-  final _llmApiKeyController = TextEditingController();
-  final _llmModelController = TextEditingController();
 
-  String _captchaMode = 'ocr';
   bool _loading = true;
   bool _saving = false;
   bool _obscurePassword = true;
-  bool _obscureApiKey = true;
 
   @override
   void initState() {
@@ -39,12 +34,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
       if (!mounted) return;
       _usernameController.text = settings.username;
       _passwordController.text = settings.password;
-      _llmBaseUrlController.text = settings.llmBaseUrl;
-      _llmApiKeyController.text = settings.llmApiKey;
-      _llmModelController.text = settings.llmModel;
-      setState(() {
-        _captchaMode = settings.captchaMode;
-      });
     } catch (e) {
       if (mounted) {
         showAppSnackBar(context, '加载保存设置失败：$e');
@@ -59,17 +48,30 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Future<void> _saveSettings() async {
+    final studentId = _usernameController.text.trim();
+    final schoolType = SchoolType.fromStudentId(studentId);
+    if (schoolType == null) {
+      await _showValidationDialog(
+        title: '请检查学号',
+        message: '本科生学号应为 9 位数字，研究生学号应为 12 位数字。请检查学号是否正确填写。',
+      );
+      return;
+    }
+    if (_passwordController.text.isEmpty) {
+      await _showValidationDialog(
+        title: '请输入密码',
+        message: '自动登录需要保存统一认证密码。',
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
     try {
       await widget.settingsService.saveAll(AutoLoginSettings(
-        username: _usernameController.text.trim(),
+        username: studentId,
         password: _passwordController.text,
-        llmBaseUrl: _llmBaseUrlController.text.trim(),
-        llmApiKey: _llmApiKeyController.text.trim(),
-        llmModel: _llmModelController.text.trim(),
-        captchaMode: _captchaMode,
       ));
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -85,13 +87,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
+  Future<void> _showValidationDialog({
+    required String title,
+    required String message,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
-    _llmBaseUrlController.dispose();
-    _llmApiKeyController.dispose();
-    _llmModelController.dispose();
     super.dispose();
   }
 
@@ -175,82 +193,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
                     const SizedBox(height: 24),
 
-                    // --- Captcha Section ---
-                    _buildSectionHeader(
-                      icon: Icons.abc_outlined,
-                      title: '验证码识别方式',
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment<String>(
-                            value: 'ocr',
-                            label: Text('内置 OCR'),
-                            icon: Icon(Icons.center_focus_strong_outlined),
-                          ),
-                          ButtonSegment<String>(
-                            value: 'vlm',
-                            label: Text('云端 VLM'),
-                            icon: Icon(Icons.cloud_outlined),
-                          ),
-                        ],
-                        selected: {_captchaMode},
-                        onSelectionChanged: (newSelection) {
-                          setState(() {
-                            _captchaMode = newSelection.first;
-                          });
-                        },
-                      ),
-                    ),
-                    if (_captchaMode == 'vlm') ...[
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _llmBaseUrlController,
-                        decoration: const InputDecoration(
-                          labelText: 'Base URL',
-                          prefixIcon: Icon(Icons.link),
-                          hintText: 'https://api.openai.com',
-                        ),
-                        keyboardType: TextInputType.url,
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _llmApiKeyController,
-                        obscureText: _obscureApiKey,
-                        decoration: InputDecoration(
-                          labelText: 'API Key',
-                          prefixIcon: const Icon(Icons.key_outlined),
-                          hintText: 'sk-...',
-                          suffixIcon: IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _obscureApiKey = !_obscureApiKey;
-                              });
-                            },
-                            icon: Icon(
-                              _obscureApiKey
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _llmModelController,
-                        decoration: const InputDecoration(
-                          labelText: 'Model',
-                          prefixIcon: Icon(Icons.psychology_outlined),
-                          hintText: 'auto',
-                        ),
-                        keyboardType: TextInputType.text,
-                      ),
-                    ],
-
-                    const SizedBox(height: 24),
-
                     // --- Save ---
                     FilledButton.icon(
                       onPressed: _saving ? null : _saveSettings,
@@ -261,7 +203,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.save_outlined),
-                      label: const Text('保存设置'),
+                      label: const Text('保存登录信息'),
                     ),
                   ],
                 ),

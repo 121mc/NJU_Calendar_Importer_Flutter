@@ -207,9 +207,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final accepted = prefs.getBool(_privacyAcceptedKey) ?? false;
 
-    // Load auto-login settings
-    await _loadAutoLoginSettings();
-
     if (!mounted) return;
 
     setState(() {
@@ -219,10 +216,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (accepted) {
       await _continueAfterPrivacyAccepted();
-      return;
+    } else {
+      await _showPrivacyConsentDialog();
     }
 
-    await _showPrivacyConsentDialog();
+    if (mounted) {
+      await _loadAutoLoginSettings();
+    }
   }
 
   Future<void> _loadAutoLoginSettings() async {
@@ -245,7 +245,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (saved == true) {
       await _loadAutoLoginSettings();
       if (mounted) {
-        _showSnackBar('设置已保存。');
+        await _authService.clearSession();
+        await _authService.clearWebViewCookies();
+        setState(() {
+          _schoolType = SchoolType.fromStudentId(_autoLoginSettings.username) ??
+              SchoolType.undergrad;
+          _session = null;
+          _bundle = null;
+          _semesterOptions = const [];
+          _selectedSemester = null;
+          _semesterOptionsLoaded = false;
+          _calendars = const [];
+          _selectedCalendarId = null;
+        });
+        _showSnackBar('登录信息已保存，请拉取学期信息。');
       }
     }
   }
@@ -271,7 +284,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               content: const SingleChildScrollView(
                 child: Text(
                   '欢迎使用“呢喃课表导入”。\n\n'
-                  '隐私政策已更新。新版政策补充说明了本地保存的登录信息、课表与日历数据处理方式，以及使用可选云端 VLM 验证码识别功能时的数据传输情况。\n\n'
+                  '隐私政策说明了本地保存的登录信息、内置 OCR、课表与日历数据处理方式。\n\n'
                   '请阅读并同意新版《隐私政策》后继续使用。本应用不包含广告或内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。',
                 ),
               ),
@@ -349,10 +362,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (session.schoolType == SchoolType.undergrad) {
       await _loadSemesterOptions();
-      return;
     }
-
-    await _loadSchedule();
   }
 
   Future<void> _checkCalendarPermissionOnLaunch({bool silent = false}) async {
@@ -418,8 +428,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
+    await _loadAutoLoginSettings();
+
+    if (!_autoLoginSettings.hasCredentials) {
+      _showSnackBar('请先配置正确的学号和密码。');
+      await _openSettingsDialog();
+      return;
+    }
+    final schoolType = SchoolType.fromStudentId(_autoLoginSettings.username);
+    if (schoolType == null) {
+      _showSnackBar('请检查学号是否为 9 位或 12 位数字。');
+      await _openSettingsDialog();
+      return;
+    }
+
+    await _authService.clearSession();
+    if (!mounted) return;
     setState(() {
+      _schoolType = schoolType;
       _loggingIn = true;
+      _session = null;
+      _bundle = null;
+      _semesterOptions = const [];
+      _selectedSemester = null;
+      _semesterOptionsLoaded = false;
+      _calendars = const [];
+      _selectedCalendarId = null;
     });
     try {
       final session = await Navigator.of(context).push<SessionInfo>(
@@ -434,16 +468,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             autoFillPassword: _autoLoginSettings.hasCredentials
                 ? _autoLoginSettings.password
                 : null,
-            llmBaseUrl: _autoLoginSettings.hasLlmConfig
-                ? _autoLoginSettings.llmBaseUrl
-                : null,
-            llmApiKey: _autoLoginSettings.hasLlmConfig
-                ? _autoLoginSettings.llmApiKey
-                : null,
-            llmModel: _autoLoginSettings.hasLlmConfig
-                ? _autoLoginSettings.llmModel
-                : null,
-            captchaMode: _autoLoginSettings.captchaMode,
+            backgroundLogin: true,
           ),
         ),
       );
@@ -472,23 +497,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
       }
     }
-  }
-
-  Future<void> _logout() async {
-    await _authService.clearSession();
-    await _authService.clearWebViewCookies();
-
-    if (!mounted) return;
-    setState(() {
-      _session = null;
-      _bundle = null;
-      _semesterOptions = const [];
-      _selectedSemester = null;
-      _semesterOptionsLoaded = false;
-      _calendars = const [];
-      _selectedCalendarId = null;
-    });
-    _showSnackBar('已清除登录态。');
   }
 
   Future<void> _loadSemesterOptions() async {
@@ -752,11 +760,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onPressed: _openPrivacyPolicyPage,
             icon: const Icon(Icons.privacy_tip_outlined),
           ),
-          IconButton(
-            tooltip: '设置',
-            onPressed: _openSettingsDialog,
-            icon: const Icon(Icons.settings_outlined),
-          ),
         ],
       ),
       body: !_privacyReady
@@ -767,11 +770,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                     children: [
-                      if (_session == null)
-                        _buildLoginCard()
-                      else
-                        _buildSessionCard(),
-                      if (_session?.schoolType == SchoolType.undergrad) ...[
+                      _buildControlCard(),
+                      if (_session != null) ...[
                         const SizedBox(height: 12),
                         _buildSemesterCard(),
                       ],
@@ -826,37 +826,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildLoginCard() {
+  Widget _buildControlCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '网页登录统一认证',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            SegmentedButton<SchoolType>(
-              segments: const [
-                ButtonSegment(
-                  value: SchoolType.undergrad,
-                  label: Text('本科生'),
-                  icon: Icon(Icons.school),
-                ),
-                ButtonSegment(
-                  value: SchoolType.graduate,
-                  label: Text('研究生'),
-                  icon: Icon(Icons.auto_stories),
-                ),
-              ],
-              selected: {_schoolType},
-              onSelectionChanged: (value) {
-                setState(() {
-                  _schoolType = value.first;
-                });
-              },
+            OutlinedButton.icon(
+              onPressed: _loggingIn ? null : _openSettingsDialog,
+              icon: const Icon(Icons.manage_accounts_outlined),
+              label: const Text('配置登录信息'),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -867,43 +847,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.language),
-              label: const Text('打开官方登录页'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSessionCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '当前登录态',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text('身份：${_session!.schoolType.label}'),
-            if (_loadingSchedule) ...[
-              const SizedBox(height: 8),
-              const LinearProgressIndicator(),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _logout,
-                    icon: const Icon(Icons.logout),
-                    label: const Text('退出并清空登录态'),
-                  ),
-                ),
-              ],
+                  : const Icon(Icons.cloud_download_outlined),
+              label: const Text('拉取学期信息'),
             ),
           ],
         ),
@@ -913,6 +858,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildSemesterCard() {
     final hasSemesterOptions = _semesterOptions.isNotEmpty;
+    final isUndergrad = _session?.schoolType == SchoolType.undergrad;
 
     return Card(
       child: Padding(
@@ -924,11 +870,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               '课表学期',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
-            if (_loadingSemesters) ...[
+            if (!isUndergrad) ...[
+              const SizedBox(height: 12),
+              const Text('研究生课表系统将在拉取时自动确定当前学期。'),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _loadingSchedule ? null : _loadSchedule,
+                icon: _loadingSchedule
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_for_offline),
+                label: const Text('拉取当前学期课表'),
+              ),
+            ],
+            if (isUndergrad && _loadingSemesters) ...[
               const SizedBox(height: 12),
               const LinearProgressIndicator(),
             ],
-            if (!_loadingSemesters &&
+            if (isUndergrad &&
+                !_loadingSemesters &&
                 _semesterOptionsLoaded &&
                 !hasSemesterOptions) ...[
               const SizedBox(height: 12),
@@ -940,7 +903,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 label: const Text('重新加载学期列表'),
               ),
             ],
-            if (hasSemesterOptions) ...[
+            if (isUndergrad && hasSemesterOptions) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<NjuSemester>(
                 initialValue: _selectedSemester,

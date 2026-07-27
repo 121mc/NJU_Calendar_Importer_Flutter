@@ -573,7 +573,7 @@ void main() {
   );
 
   testWidgets(
-    'restored graduate session keeps current-semester auto fetch',
+    'restored graduate session shows semester card before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
         'privacy_policy_accepted_v2': true,
@@ -595,8 +595,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(scheduleService.fetchedOptions, isFalse);
+      expect(scheduleService.fetchedCurrentSchedule, isFalse);
+      expect(find.text('课表学期'), findsOneWidget);
+      expect(find.text('拉取当前学期课表'), findsOneWidget);
+      expect(find.text('系统日历同步'), findsNothing);
+
+      await tester.tap(find.text('拉取当前学期课表'));
+      await tester.pumpAndSettle();
+
       expect(scheduleService.fetchedCurrentSchedule, isTrue);
-      expect(find.text('课表学期'), findsNothing);
       expect(find.text('系统日历同步'), findsOneWidget);
     },
   );

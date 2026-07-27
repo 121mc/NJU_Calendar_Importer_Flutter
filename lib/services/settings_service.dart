@@ -1,15 +1,17 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Manages user-configurable settings for auto-login and LLM captcha recognition.
+/// Manages the credentials used by the automatic NJU login flow.
 class SettingsService {
   static const _storage = FlutterSecureStorage();
 
   static const _keyUsername = 'settings_username';
   static const _keyPassword = 'settings_password';
-  static const _keyLlmBaseUrl = 'settings_llm_base_url';
-  static const _keyLlmApiKey = 'settings_llm_api_key';
-  static const _keyLlmModel = 'settings_llm_model';
-  static const _keyCaptchaMode = 'settings_captcha_mode';
+  static const _legacyCloudKeys = [
+    'settings_llm_base_url',
+    'settings_llm_api_key',
+    'settings_llm_model',
+    'settings_captcha_mode',
+  ];
 
   Future<String> getUsername() async {
     try {
@@ -33,84 +35,20 @@ class SettingsService {
     }
   }
 
-  Future<String> getLlmBaseUrl() async {
-    try {
-      return await _storage.read(key: _keyLlmBaseUrl) ?? '';
-    } catch (_) {
-      try {
-        await _storage.delete(key: _keyLlmBaseUrl);
-      } catch (_) {}
-      return '';
-    }
-  }
-
-  Future<String> getLlmApiKey() async {
-    try {
-      return await _storage.read(key: _keyLlmApiKey) ?? '';
-    } catch (_) {
-      try {
-        await _storage.delete(key: _keyLlmApiKey);
-      } catch (_) {}
-      return '';
-    }
-  }
-
-  Future<String> getLlmModel() async {
-    try {
-      return await _storage.read(key: _keyLlmModel) ?? 'auto';
-    } catch (_) {
-      try {
-        await _storage.delete(key: _keyLlmModel);
-      } catch (_) {}
-      return 'auto';
-    }
-  }
-
-  Future<String> getCaptchaMode() async {
-    try {
-      return await _storage.read(key: _keyCaptchaMode) ?? 'ocr';
-    } catch (_) {
-      try {
-        await _storage.delete(key: _keyCaptchaMode);
-      } catch (_) {}
-      return 'ocr';
-    }
-  }
-
   Future<void> setUsername(String value) async =>
       await _storage.write(key: _keyUsername, value: value);
 
   Future<void> setPassword(String value) async =>
       await _storage.write(key: _keyPassword, value: value);
 
-  Future<void> setLlmBaseUrl(String value) async =>
-      await _storage.write(key: _keyLlmBaseUrl, value: value);
-
-  Future<void> setLlmApiKey(String value) async =>
-      await _storage.write(key: _keyLlmApiKey, value: value);
-
-  Future<void> setLlmModel(String value) async =>
-      await _storage.write(key: _keyLlmModel, value: value);
-
-  Future<void> setCaptchaMode(String value) async =>
-      await _storage.write(key: _keyCaptchaMode, value: value);
-
   Future<AutoLoginSettings> loadAll() async {
     final results = await Future.wait([
       getUsername(),
       getPassword(),
-      getLlmBaseUrl(),
-      getLlmApiKey(),
-      getLlmModel(),
-      getCaptchaMode(),
     ]);
     return AutoLoginSettings(
       username: results[0],
       password: results[1],
-      llmBaseUrl: results[2],
-      llmApiKey: results[3],
-      llmModel: results[4],
-      captchaMode: results[5],
     );
   }
 
@@ -118,11 +56,18 @@ class SettingsService {
     await Future.wait([
       setUsername(settings.username),
       setPassword(settings.password),
-      setLlmBaseUrl(settings.llmBaseUrl),
-      setLlmApiKey(settings.llmApiKey),
-      setLlmModel(settings.llmModel),
-      setCaptchaMode(settings.captchaMode),
     ]);
+    await _removeLegacyCloudSettings();
+  }
+
+  Future<void> _removeLegacyCloudSettings() async {
+    for (final key in _legacyCloudKeys) {
+      try {
+        await _storage.delete(key: key);
+      } catch (_) {
+        // A storage failure should not prevent local OCR login from working.
+      }
+    }
   }
 }
 
@@ -130,19 +75,10 @@ class AutoLoginSettings {
   const AutoLoginSettings({
     this.username = '',
     this.password = '',
-    this.llmBaseUrl = '',
-    this.llmApiKey = '',
-    this.llmModel = 'auto',
-    this.captchaMode = 'ocr',
   });
 
   final String username;
   final String password;
-  final String llmBaseUrl;
-  final String llmApiKey;
-  final String llmModel;
-  final String captchaMode;
 
-  bool get hasCredentials => username.isNotEmpty || password.isNotEmpty;
-  bool get hasLlmConfig => llmBaseUrl.isNotEmpty && llmApiKey.isNotEmpty;
+  bool get hasCredentials => username.isNotEmpty && password.isNotEmpty;
 }

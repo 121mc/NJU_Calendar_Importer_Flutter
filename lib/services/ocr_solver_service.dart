@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 
@@ -23,14 +23,17 @@ class OcrSolverService {
     _initializing = true;
     try {
       final ort = OnnxRuntime();
-      _session = await ort.createSessionFromAsset('assets/models/common_old.onnx');
+      _session =
+          await ort.createSessionFromAsset('assets/models/common_old.onnx');
 
-      final charsetJsonStr = await rootBundle.loadString('assets/models/charset_old.json');
+      final charsetJsonStr =
+          await rootBundle.loadString('assets/models/charset_old.json');
       final List<dynamic> charsetList = jsonDecode(charsetJsonStr);
       _charset = charsetList.cast<String>();
-      print('[OcrSolverService] Initialized successfully. Charset size: ${_charset?.length}');
+      debugPrint(
+          '[OcrSolverService] Initialized successfully. Charset size: ${_charset?.length}');
     } catch (e) {
-      print('[OcrSolverService] Initialization failed: $e');
+      debugPrint('[OcrSolverService] Initialization failed: $e');
       rethrow;
     } finally {
       _initializing = false;
@@ -54,10 +57,12 @@ class OcrSolverService {
 
     final int targetHeight = 64;
     // 等比例计算新的宽度
-    final int targetWidth = (originalImage.width * (targetHeight / originalImage.height)).toInt();
+    final int targetWidth =
+        (originalImage.width * (targetHeight / originalImage.height)).toInt();
 
     // 2. 缩放图片，高度强行锁定为 64
-    final resizedImage = img.copyResize(originalImage, width: targetWidth, height: targetHeight);
+    final resizedImage =
+        img.copyResize(originalImage, width: targetWidth, height: targetHeight);
 
     List<double> inputTensorData = [];
 
@@ -67,7 +72,8 @@ class OcrSolverService {
         final pixel = resizedImage.getPixel(x, y);
 
         // 转灰度 (0.299 R + 0.587 G + 0.114 B)
-        double grayscale = (pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114);
+        double grayscale =
+            (pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114);
 
         // 关键归一化: (value / 255.0 - 0.5) / 0.5
         double normalized = (grayscale / 255.0 - 0.5) / 0.5;
@@ -140,9 +146,8 @@ class OcrSolverService {
       final result = buffer.toString();
       // Clean up: remove whitespace and non-alphanumeric chars
       final cleaned = result.trim().replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-      print('[OcrSolverService] Raw: $result, Cleaned: $cleaned');
+      debugPrint('[OcrSolverService] Raw: $result, Cleaned: $cleaned');
       return cleaned;
-
     } finally {
       // Clean up tensors to prevent native memory leaks
       await inputTensor.dispose();

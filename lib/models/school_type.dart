@@ -40,6 +40,20 @@ enum SchoolType {
 
   bool get supportsFinalExams => this == SchoolType.undergrad;
 
+  static SchoolType? fromStudentId(String studentId) {
+    if (!RegExp(r'^\d+$').hasMatch(studentId)) {
+      return null;
+    }
+    switch (studentId.length) {
+      case 9:
+        return SchoolType.undergrad;
+      case 12:
+        return SchoolType.graduate;
+      default:
+        return null;
+    }
+  }
+
   static SchoolType fromStorageValue(String? value) {
     if (value == 'graduate') {
       return SchoolType.graduate;

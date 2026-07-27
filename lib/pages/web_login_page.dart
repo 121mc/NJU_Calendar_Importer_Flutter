@@ -7,7 +7,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../models/login_models.dart';
 import '../models/school_type.dart';
 import '../services/auth_service.dart';
-import '../services/captcha_solver_service.dart';
 import '../services/ocr_solver_service.dart';
 
 class WebLoginPage extends StatefulWidget {
@@ -18,10 +17,7 @@ class WebLoginPage extends StatefulWidget {
     required this.usernameHint,
     this.autoFillUsername,
     this.autoFillPassword,
-    this.llmBaseUrl,
-    this.llmApiKey,
-    this.llmModel,
-    this.captchaMode = 'ocr',
+    this.backgroundLogin = false,
   });
 
   final SchoolType schoolType;
@@ -32,26 +28,12 @@ class WebLoginPage extends StatefulWidget {
   final String? autoFillUsername;
   final String? autoFillPassword;
 
-  /// LLM configuration for automatic captcha solving.
-  final String? llmBaseUrl;
-  final String? llmApiKey;
-  final String? llmModel;
-
-  /// Captcha recognition mode: 'ocr' or 'vlm'
-  final String captchaMode;
+  /// Keeps the official page active behind a progress overlay during auto-login.
+  final bool backgroundLogin;
 
   bool get hasCredentials =>
-      (autoFillUsername != null && autoFillUsername!.isNotEmpty) ||
+      (autoFillUsername != null && autoFillUsername!.isNotEmpty) &&
       (autoFillPassword != null && autoFillPassword!.isNotEmpty);
-
-  bool get hasLlmConfig =>
-      llmBaseUrl != null &&
-      llmBaseUrl!.isNotEmpty &&
-      llmApiKey != null &&
-      llmApiKey!.isNotEmpty;
-
-  bool get isAutoCaptchaSupported =>
-      captchaMode == 'ocr' || (captchaMode == 'vlm' && hasLlmConfig);
 
   @override
   State<WebLoginPage> createState() => _WebLoginPageState();
@@ -72,6 +54,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   bool _autoFillDone = false;
   bool _autoFilling = false;
   bool _captchaSolving = false;
+  late bool _showWebContent;
 
   String get _loginEntryUrl {
     final service = Uri.encodeComponent(widget.schoolType.appShowUrl);
@@ -103,10 +86,12 @@ class _WebLoginPageState extends State<WebLoginPage> {
   void initState() {
     super.initState();
     _init();
+    _showWebContent = !widget.backgroundLogin;
   }
 
   Future<void> _init() async {
-    debugPrint('[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}, captchaMode=${widget.captchaMode}, isAutoCaptchaSupported=${widget.isAutoCaptchaSupported}');
+    debugPrint(
+        '[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}');
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -159,7 +144,8 @@ class _WebLoginPageState extends State<WebLoginPage> {
                 _attemptAutoFill();
               } else if (mounted) {
                 setState(() {
-                  _status = '跳过自动填充: done=$_autoFillDone, filling=$_autoFilling';
+                  _status =
+                      '跳过自动填充: done=$_autoFillDone, filling=$_autoFilling';
                 });
               }
             } else if (_isTargetArea(url)) {
@@ -181,12 +167,14 @@ class _WebLoginPageState extends State<WebLoginPage> {
         _initializing = false;
       });
     }
-    
+
     // Wait for the next frame so the platform view has a chance to initialize
     await Future.delayed(const Duration(milliseconds: 100));
 
     try {
-      await widget.authService.clearWebViewCookies().timeout(const Duration(seconds: 3));
+      await widget.authService
+          .clearWebViewCookies()
+          .timeout(const Duration(seconds: 3));
     } catch (e) {
       debugPrint('[WebLoginPage] Error clearing cookies: $e');
     }
@@ -207,16 +195,19 @@ class _WebLoginPageState extends State<WebLoginPage> {
   /// filled. This handles the race condition where the page's own JS may
   /// not have injected the form into the DOM yet when onPageFinished fires.
   Future<void> _attemptAutoFill() async {
-    debugPrint('[WebLoginPage] Attempting auto-fill. hasCredentials=${widget.hasCredentials}, autoFillDone=$_autoFillDone, autoFilling=$_autoFilling');
+    debugPrint(
+        '[WebLoginPage] Attempting auto-fill. hasCredentials=${widget.hasCredentials}, autoFillDone=$_autoFillDone, autoFilling=$_autoFilling');
     if (!widget.hasCredentials) {
-      debugPrint('[WebLoginPage] Auto-fill skipped: no credentials in settings');
+      debugPrint(
+          '[WebLoginPage] Auto-fill skipped: no credentials in settings');
       if (mounted) {
         setState(() => _status = '自动填充已跳过：未配置账号密码');
       }
       return;
     }
     if (_autoFillDone || _autoFilling) {
-      debugPrint('[WebLoginPage] Auto-fill skipped: done=$_autoFillDone, filling=$_autoFilling');
+      debugPrint(
+          '[WebLoginPage] Auto-fill skipped: done=$_autoFillDone, filling=$_autoFilling');
       return;
     }
     _autoFilling = true;
@@ -315,9 +306,12 @@ class _WebLoginPageState extends State<WebLoginPage> {
             })();
           ''');
 
-          final count = int.tryParse(fillResult.toString().replaceAll('"', '').trim()) ?? 0;
+          final count =
+              int.tryParse(fillResult.toString().replaceAll('"', '').trim()) ??
+                  0;
           if (count > 0) {
-            debugPrint('[WebLoginPage] Parallel: Autofill completed successfully. Filled $count inputs.');
+            debugPrint(
+                '[WebLoginPage] Parallel: Autofill completed successfully. Filled $count inputs.');
             autofillSuccess = true;
             _autoFillDone = true;
             if (mounted) {
@@ -337,10 +331,11 @@ class _WebLoginPageState extends State<WebLoginPage> {
 
     // Poll captcha and solve it
     Future<void> doCaptchaSolving() async {
-      debugPrint('[WebLoginPage] Parallel: doCaptchaSolving started. mode=${widget.captchaMode}, isAutoCaptchaSupported=${widget.isAutoCaptchaSupported}');
+      debugPrint(
+          '[WebLoginPage] Parallel: doCaptchaSolving started with built-in OCR');
       DateTime? autofillCompleteTime;
       const pollInterval = Duration(milliseconds: 50);
-      final totalTimeout = widget.isAutoCaptchaSupported ? const Duration(seconds: 8) : const Duration(seconds: 2);
+      const totalTimeout = Duration(seconds: 8);
 
       while (mounted && !_done) {
         final now = DateTime.now();
@@ -364,7 +359,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
             if (!isVisible) return 'hidden';
 
             // Try to extract image base64 if auto captcha is supported
-            if (${widget.isAutoCaptchaSupported}) {
+            if (true) {
               try {
                 var imgs = document.querySelectorAll('#captchaImg, .captcha-img img');
                 var visibleImg = null;
@@ -412,28 +407,21 @@ class _WebLoginPageState extends State<WebLoginPage> {
         if (statusStr.startsWith('base64:')) {
           captchaRequired = true;
           final base64Image = statusStr.substring(7);
-          debugPrint('[WebLoginPage] Parallel captcha: Image loaded, base64 length = ${base64Image.length}');
-          
+          debugPrint(
+              '[WebLoginPage] Parallel captcha: Image loaded, base64 length = ${base64Image.length}');
+
           if (mounted) {
             setState(() {
-              _status = widget.captchaMode == 'vlm' ? '检测到验证码，正在使用 LLM 识别…' : '检测到验证码，正在使用内置 OCR 识别…';
+              _status = '检测到验证码，正在使用内置 OCR 识别…';
               _captchaSolving = true;
             });
           }
 
           try {
             final imageBytes = Uint8List.fromList(base64Decode(base64Image));
-            if (widget.captchaMode == 'vlm') {
-              final solver = CaptchaSolverService(
-                baseUrl: widget.llmBaseUrl!,
-                apiKey: widget.llmApiKey!,
-                model: widget.llmModel ?? 'auto',
-              );
-              solvedCaptchaText = await solver.solveCaptcha(imageBytes);
-            } else {
-              solvedCaptchaText = await OcrSolverService.solve(imageBytes);
-            }
-            debugPrint('[WebLoginPage] Parallel captcha: Solved text = $solvedCaptchaText');
+            solvedCaptchaText = await OcrSolverService.solve(imageBytes);
+            debugPrint(
+                '[WebLoginPage] Parallel captcha: Solved text = $solvedCaptchaText');
             break; // Solved!
           } catch (e) {
             debugPrint('[WebLoginPage] Error during captcha solving: $e');
@@ -447,26 +435,29 @@ class _WebLoginPageState extends State<WebLoginPage> {
             _captchaSolving = false;
           }
         } else if (statusStr == 'already_processed') {
-          debugPrint('[WebLoginPage] Parallel captcha: already processed this image src');
+          debugPrint(
+              '[WebLoginPage] Parallel captcha: already processed this image src');
           break;
         } else if (statusStr == 'visible_loading') {
           captchaRequired = true;
           // Captcha is visible but image is not loaded yet, keep polling
-          debugPrint('[WebLoginPage] Parallel captcha: Visible but image loading...');
+          debugPrint(
+              '[WebLoginPage] Parallel captcha: Visible but image loading...');
         } else if (statusStr == 'visible') {
-          // Captcha is visible but LLM is not enabled
+          // Captcha is visible but the image could not be extracted yet.
           captchaRequired = true;
-          debugPrint('[WebLoginPage] Parallel captcha: Visible but LLM config is disabled');
+          debugPrint(
+              '[WebLoginPage] Parallel captcha: Visible without image data');
           break;
         } else {
           // Captcha is hidden
           if (_autoFillDone) {
             autofillCompleteTime ??= DateTime.now();
-            final waitDuration = widget.isAutoCaptchaSupported 
-                ? const Duration(milliseconds: 1000) 
-                : const Duration(milliseconds: 500);
-            if (DateTime.now().difference(autofillCompleteTime) > waitDuration) {
-              debugPrint('[WebLoginPage] Parallel captcha: No captcha required after wait post-autofill.');
+            const waitDuration = Duration(milliseconds: 1000);
+            if (DateTime.now().difference(autofillCompleteTime) >
+                waitDuration) {
+              debugPrint(
+                  '[WebLoginPage] Parallel captcha: No captcha required after wait post-autofill.');
               break;
             }
           }
@@ -680,7 +671,53 @@ class _WebLoginPageState extends State<WebLoginPage> {
           Expanded(
             child: _initializing
                 ? const Center(child: CircularProgressIndicator())
-                : WebViewWidget(controller: _controller),
+                : Stack(
+                    children: [
+                      Positioned.fill(
+                        child: WebViewWidget(controller: _controller),
+                      ),
+                      if (!_showWebContent)
+                        Positioned.fill(
+                          child: ColoredBox(
+                            color: Theme.of(context).colorScheme.surface,
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.sync_lock_outlined,
+                                      size: 52,
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
+                                    ),
+                                    const SizedBox(height: 20),
+                                    const CircularProgressIndicator(),
+                                    const SizedBox(height: 20),
+                                    Text(
+                                      _status,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() => _showWebContent = true);
+                                      },
+                                      child: const Text('需要手动处理？显示官方登录页'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
           ),
         ],
       ),
