@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/login_models.dart';
@@ -9,6 +11,23 @@ import '../models/school_type.dart';
 import '../services/auth_service.dart';
 import '../services/ocr_solver_service.dart';
 
+enum AutomaticLoginFailureType {
+  network,
+  invalidCredentials,
+  sliderFailed,
+  other,
+}
+
+class AutomaticLoginFailure {
+  const AutomaticLoginFailure(this.type, [this.detail = '']);
+
+  final AutomaticLoginFailureType type;
+  final String detail;
+}
+
+/// Runs the same NJU unified-auth automation used by Auto_Auth_Login inside a
+/// WebView. The content script is bundled with app-specific failure handling;
+/// this page also provides compatibility implementations for Chrome APIs.
 class WebLoginPage extends StatefulWidget {
   const WebLoginPage({
     super.key,
@@ -18,43 +37,65 @@ class WebLoginPage extends StatefulWidget {
     this.autoFillUsername,
     this.autoFillPassword,
     this.backgroundLogin = false,
+    this.automaticLogin = true,
+    this.embedded = false,
+    this.onSession,
+    this.onAutomaticLoginFailure,
   });
 
   final SchoolType schoolType;
   final AuthService authService;
   final String usernameHint;
-
-  /// Pre-configured credentials for auto-fill.
   final String? autoFillUsername;
   final String? autoFillPassword;
 
-  /// Keeps the official page active behind a progress overlay during auto-login.
+  /// Keeps the official page active behind a progress overlay during login.
   final bool backgroundLogin;
 
+  /// Runs the full captcha-solving and form-submission automation.
+  ///
+  /// When false, credentials are filled but captcha handling and submission
+  /// are left entirely to the user.
+  final bool automaticLogin;
+
+  /// Builds only the WebView so it can run transparently inside the home page.
+  final bool embedded;
+
+  final ValueChanged<SessionInfo>? onSession;
+  final ValueChanged<AutomaticLoginFailure>? onAutomaticLoginFailure;
+
   bool get hasCredentials =>
-      (autoFillUsername != null && autoFillUsername!.isNotEmpty) &&
-      (autoFillPassword != null && autoFillPassword!.isNotEmpty);
+      autoFillUsername?.isNotEmpty == true &&
+      autoFillPassword?.isNotEmpty == true;
 
   @override
   State<WebLoginPage> createState() => _WebLoginPageState();
 }
 
 class _WebLoginPageState extends State<WebLoginPage> {
+  static const _bridgeName = 'NjuAutoLoginBridge';
+  static const _automationAsset = 'assets/scripts/auto_auth_login.js';
+  static const _trajectoryAsset = 'assets/recordings/3.json';
+
   late final WebViewController _controller;
 
   bool _initializing = true;
   bool _checking = false;
   bool _done = false;
+  bool _autoFillDone = false;
+  bool _autoFilling = false;
+  bool _captchaSolving = false;
+  bool _failureReported = false;
+  late bool _showWebContent;
 
   int _progress = 0;
   String _status = '正在准备网页登录环境…';
   String _currentUrl = '';
   String _lastCheckedUrl = '';
-
-  bool _autoFillDone = false;
-  bool _autoFilling = false;
-  bool _captchaSolving = false;
-  late bool _showWebContent;
+  String? _automationSource;
+  String? _trajectoryDataUrl;
+  Timer? _automaticLoginTimeout;
+  Timer? _pageLoadTimeout;
 
   String get _loginEntryUrl {
     final service = Uri.encodeComponent(widget.schoolType.appShowUrl);
@@ -68,527 +109,572 @@ class _WebLoginPageState extends State<WebLoginPage> {
         url.contains('/sys/');
   }
 
-  bool _isAuthPage(String url) {
-    return url.contains('authserver.nju.edu.cn');
-  }
-
-  /// Escape a string for safe embedding in JS single-quoted strings.
-  String _escapeJs(String s) {
-    return s
-        .replaceAll('\\', '\\\\')
-        .replaceAll("'", "\\'")
-        .replaceAll('"', '\\"')
-        .replaceAll('\n', '\\n')
-        .replaceAll('\r', '\\r');
-  }
+  bool _isAuthPage(String url) =>
+      url.contains('authserver.nju.edu.cn/authserver/login');
 
   @override
   void initState() {
     super.initState();
-    _init();
     _showWebContent = !widget.backgroundLogin;
+    if (widget.automaticLogin && widget.onAutomaticLoginFailure != null) {
+      _automaticLoginTimeout = Timer(const Duration(minutes: 2), () {
+        _reportAutomaticLoginFailure(
+          const AutomaticLoginFailure(
+            AutomaticLoginFailureType.other,
+            '自动登录等待超时',
+          ),
+        );
+      });
+    }
+    _init();
   }
 
   Future<void> _init() async {
-    debugPrint(
-        '[WebLoginPage] Init: schoolType=${widget.schoolType}, userHint=${widget.usernameHint}, autoFillUser=${widget.autoFillUsername}, autoFillPwdLen=${widget.autoFillPassword?.length ?? 0}');
+    if (widget.automaticLogin) {
+      try {
+        final assets = await Future.wait([
+          rootBundle.loadString(_automationAsset),
+          rootBundle.loadString(_trajectoryAsset),
+        ]);
+        _automationSource = assets[0];
+        _trajectoryDataUrl =
+            'data:application/json;base64,${base64Encode(utf8.encode(assets[1]))}';
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _status = '加载自动登录脚本失败：$error';
+            _showWebContent = true;
+          });
+        }
+      }
+    }
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        _bridgeName,
+        onMessageReceived: _handleBridgeMessage,
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) {
-            if (!mounted) return;
-            setState(() {
-              _progress = progress;
-            });
+            if (mounted) setState(() => _progress = progress);
           },
           onPageStarted: (url) {
             if (!mounted) return;
+            _startPageLoadTimeout();
             setState(() {
               _currentUrl = url;
               if (_isAuthPage(url)) {
-                _status = '请在官方统一认证页面中完成登录…';
+                _status = '统一认证页面加载中…';
                 _autoFillDone = false;
+                _autoFilling = false;
               } else if (_isTargetArea(url)) {
-                _status = '已进入目标系统，正在检测登录态…';
+                _status = '已进入目标系统，正在读取登录状态…';
               } else {
                 _status = '页面跳转中…';
               }
             });
           },
           onPageFinished: (url) async {
-            debugPrint('[WebLoginPage] PageFinished: $url');
             if (!mounted || _done) return;
-
-            setState(() {
-              _currentUrl = url;
-            });
+            _pageLoadTimeout?.cancel();
+            setState(() => _currentUrl = url);
 
             if (_isAuthPage(url)) {
-              // Show debug info about auto-fill gate conditions
-              final gateInfo = 'isAuth=true, '
-                  'hasCredentials=${widget.hasCredentials}, '
-                  'user="${widget.autoFillUsername}", '
-                  'pwdLen=${widget.autoFillPassword?.length ?? 0}, '
-                  'done=$_autoFillDone, filling=$_autoFilling';
-              debugPrint('[WebLoginPage] GateInfo: $gateInfo');
-              if (mounted) {
-                setState(() {
-                  _status = '认证页已加载 [$gateInfo]';
-                });
-              }
-
-              // Try auto-fill every time auth page finishes loading
-              if (!_autoFillDone && !_autoFilling) {
-                _attemptAutoFill();
-              } else if (mounted) {
-                setState(() {
-                  _status =
-                      '跳过自动填充: done=$_autoFillDone, filling=$_autoFilling';
-                });
+              if (widget.automaticLogin) {
+                await _injectAutoLogin();
+              } else {
+                await _fillCredentialsOnly();
               }
             } else if (_isTargetArea(url)) {
               await _tryCompleteFromCookies(url);
             }
           },
           onWebResourceError: (error) {
-            if (!mounted) return;
+            if (!mounted || error.isForMainFrame == false) return;
             setState(() {
               _status = '网页加载失败：${error.description}';
+              _showWebContent = true;
             });
+            if (widget.automaticLogin) {
+              _reportAutomaticLoginFailure(
+                AutomaticLoginFailure(
+                  AutomaticLoginFailureType.network,
+                  error.description,
+                ),
+              );
+            }
           },
         ),
       );
 
-    // Build the WebViewWidget first so the native view is created
-    if (mounted) {
-      setState(() {
-        _initializing = false;
-      });
-    }
+    if (mounted) setState(() => _initializing = false);
 
-    // Wait for the next frame so the platform view has a chance to initialize
-    await Future.delayed(const Duration(milliseconds: 100));
-
+    await Future<void>.delayed(const Duration(milliseconds: 100));
     try {
-      await widget.authService
-          .clearWebViewCookies()
-          .timeout(const Duration(seconds: 3));
-    } catch (e) {
-      debugPrint('[WebLoginPage] Error clearing cookies: $e');
+      await widget.authService.clearWebViewCookies().timeout(
+            const Duration(seconds: 3),
+          );
+    } catch (error) {
+      debugPrint('[WebLoginPage] Failed to clear WebView cookies: $error');
     }
 
-    if (!mounted) return;
-    await _controller.loadRequest(Uri.parse(_loginEntryUrl));
-
     if (mounted) {
-      setState(() {
-        _status = '请在下方官方页面中完成统一认证登录。';
-      });
+      await _controller.loadRequest(Uri.parse(_loginEntryUrl));
     }
   }
 
-  // --------------- Auto-fill logic ---------------
-
-  /// Polls up to [maxAttempts] times until the username input is found and
-  /// filled. This handles the race condition where the page's own JS may
-  /// not have injected the form into the DOM yet when onPageFinished fires.
-  Future<void> _attemptAutoFill() async {
-    debugPrint(
-        '[WebLoginPage] Attempting auto-fill. hasCredentials=${widget.hasCredentials}, autoFillDone=$_autoFillDone, autoFilling=$_autoFilling');
+  Future<void> _injectAutoLogin() async {
+    if (_autoFillDone || _autoFilling || _done) return;
     if (!widget.hasCredentials) {
-      debugPrint(
-          '[WebLoginPage] Auto-fill skipped: no credentials in settings');
-      if (mounted) {
-        setState(() => _status = '自动填充已跳过：未配置账号密码');
-      }
-      return;
-    }
-    if (_autoFillDone || _autoFilling) {
-      debugPrint(
-          '[WebLoginPage] Auto-fill skipped: done=$_autoFillDone, filling=$_autoFilling');
-      return;
-    }
-    _autoFilling = true;
-    _captchaSolving = false;
-
-    if (mounted) {
-      setState(() => _status = '正在执行自动登录流程…');
-    }
-
-    final startTime = DateTime.now();
-    bool autofillSuccess = false;
-    String? solvedCaptchaText;
-    bool captchaRequired = false;
-
-    // Task 1: Autofill username & password
-    Future<bool> doAutofill() async {
-      debugPrint('[WebLoginPage] Parallel: doAutofill started');
-      try {
-        const maxAttempts = 20; // 20 attempts * 50ms = 1.0s max
-        for (int attempt = 0; attempt < maxAttempts; attempt++) {
-          if (!mounted || _done) return false;
-
-          // Check if username input is available in DOM
-          final checkResult = await _controller.runJavaScriptReturningResult('''
-            (function() {
-              var allUserInputs = document.querySelectorAll('input[name="username"]');
-              var visibleCount = 0;
-              for (var i = 0; i < allUserInputs.length; i++) {
-                var el = allUserInputs[i];
-                if (el.offsetParent !== null || (el.offsetWidth > 0 && el.offsetHeight > 0)) {
-                  visibleCount++;
-                }
-              }
-              return visibleCount > 0;
-            })();
-          ''');
-
-          final hasVisibleInput = checkResult.toString().trim() == 'true';
-          if (!hasVisibleInput) {
-            // Activate password login form
-            await _controller.runJavaScript('''
-              (function() {
-                if (typeof showTabHeadAndDiv === 'function') {
-                  try { showTabHeadAndDiv('userNameLogin', 1); } catch(e) {}
-                }
-                var pwdDiv = document.getElementById('pwdLoginDiv');
-                if (pwdDiv && pwdDiv.style.display === 'none') {
-                  pwdDiv.style.display = '';
-                }
-                var lv = document.getElementById('loginViewDiv');
-                if (lv && lv.children.length === 0 && pwdDiv) {
-                  lv.innerHTML = pwdDiv.innerHTML;
-                }
-              })();
-            ''');
-            await Future.delayed(const Duration(milliseconds: 50));
-            continue;
-          }
-
-          // Visible input found! Fill username and password
-          final fillResult = await _controller.runJavaScriptReturningResult('''
-            (function() {
-              var filled = 0;
-              var uVal = '${_escapeJs(widget.autoFillUsername ?? '')}';
-              var pVal = '${_escapeJs(widget.autoFillPassword ?? '')}';
-              
-              // Fill all username inputs
-              document.querySelectorAll('input[name="username"]').forEach(function(el) {
-                el.value = uVal;
-                el.dispatchEvent(new Event('input',  {bubbles:true}));
-                el.dispatchEvent(new Event('change', {bubbles:true}));
-                el.dispatchEvent(new Event('blur',   {bubbles:true}));
-                filled++;
-              });
-
-              // Fill all password inputs
-              document.querySelectorAll('input[name="userPassword"]').forEach(function(el) {
-                el.value = pVal;
-                el.dispatchEvent(new Event('input',  {bubbles:true}));
-                el.dispatchEvent(new Event('change', {bubbles:true}));
-              });
-
-              var pwdById = document.getElementById('password');
-              if (pwdById && pwdById.type === 'password') {
-                pwdById.value = pVal;
-                pwdById.dispatchEvent(new Event('input',  {bubbles:true}));
-                pwdById.dispatchEvent(new Event('change', {bubbles:true}));
-              }
-
-              // Trigger checkUserCaptcha
-              if (typeof checkUserCaptcha === 'function') {
-                try { checkUserCaptcha(); } catch(e) {}
-              }
-
-              return filled;
-            })();
-          ''');
-
-          final count =
-              int.tryParse(fillResult.toString().replaceAll('"', '').trim()) ??
-                  0;
-          if (count > 0) {
-            debugPrint(
-                '[WebLoginPage] Parallel: Autofill completed successfully. Filled $count inputs.');
-            autofillSuccess = true;
-            _autoFillDone = true;
-            if (mounted) {
-              setState(() {
-                _status = '账号密码已自动填充。';
-              });
-            }
-            return true;
-          }
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-      } catch (e) {
-        debugPrint('[WebLoginPage] Error in doAutofill: $e');
-      }
-      return false;
-    }
-
-    // Poll captcha and solve it
-    Future<void> doCaptchaSolving() async {
-      debugPrint(
-          '[WebLoginPage] Parallel: doCaptchaSolving started with built-in OCR');
-      DateTime? autofillCompleteTime;
-      const pollInterval = Duration(milliseconds: 50);
-      const totalTimeout = Duration(seconds: 8);
-
-      while (mounted && !_done) {
-        final now = DateTime.now();
-        if (now.difference(startTime) > totalTimeout) {
-          debugPrint('[WebLoginPage] Parallel captcha: timeout reached');
-          break;
-        }
-
-        // Check if captcha is visible
-        final visCheck = await _controller.runJavaScriptReturningResult('''
-          (function() {
-            var divs = document.querySelectorAll('#captchaDiv');
-            var isVisible = false;
-            for (var i = 0; i < divs.length; i++) {
-              var cd = divs[i];
-              if (cd.offsetWidth > 0 && cd.offsetHeight > 0) {
-                isVisible = true;
-                break;
-              }
-            }
-            if (!isVisible) return 'hidden';
-
-            // Try to extract image base64 if auto captcha is supported
-            if (true) {
-              try {
-                var imgs = document.querySelectorAll('#captchaImg, .captcha-img img');
-                var visibleImg = null;
-                for (var i = 0; i < imgs.length; i++) {
-                  var img = imgs[i];
-                  if (img.offsetWidth > 0 && img.offsetHeight > 0) {
-                    visibleImg = img;
-                    break;
-                  }
-                }
-                if (visibleImg) {
-                  var src = visibleImg.src || '';
-                  // Ensure the src has a query parameter (indicating it's the dynamic captcha, not a placeholder)
-                  if (src.indexOf('?') === -1) {
-                    return 'visible_loading';
-                  }
-
-                  // Check if this src has already been solved/processed in this session
-                  if (window._lastCaptchaSrc === src) {
-                    return 'already_processed';
-                  }
-
-                  if (visibleImg.complete && (visibleImg.naturalWidth || visibleImg.width) > 0) {
-                    var canvas = document.createElement('canvas');
-                    canvas.width = visibleImg.naturalWidth || visibleImg.width;
-                    canvas.height = visibleImg.naturalHeight || visibleImg.height;
-                    var ctx = canvas.getContext('2d');
-                    ctx.drawImage(visibleImg, 0, 0);
-                    var dataUrl = canvas.toDataURL('image/png');
-                    
-                    // Mark as processed
-                    window._lastCaptchaSrc = src;
-                    
-                    return 'base64:' + dataUrl.substring(dataUrl.indexOf(',') + 1);
-                  }
-                }
-              } catch(e) {}
-              return 'visible_loading';
-            }
-            return 'visible';
-          })();
-        ''');
-
-        final statusStr = visCheck.toString().replaceAll('"', '').trim();
-        if (statusStr.startsWith('base64:')) {
-          captchaRequired = true;
-          final base64Image = statusStr.substring(7);
-          debugPrint(
-              '[WebLoginPage] Parallel captcha: Image loaded, base64 length = ${base64Image.length}');
-
-          if (mounted) {
-            setState(() {
-              _status = '检测到验证码，正在使用内置 OCR 识别…';
-              _captchaSolving = true;
-            });
-          }
-
-          try {
-            final imageBytes = Uint8List.fromList(base64Decode(base64Image));
-            solvedCaptchaText = await OcrSolverService.solve(imageBytes);
-            debugPrint(
-                '[WebLoginPage] Parallel captcha: Solved text = $solvedCaptchaText');
-            break; // Solved!
-          } catch (e) {
-            debugPrint('[WebLoginPage] Error during captcha solving: $e');
-            if (mounted) {
-              setState(() {
-                _status = '验证码识别出错：$e，请手动输入。';
-              });
-            }
-            break; // Stop polling on solver error
-          } finally {
-            _captchaSolving = false;
-          }
-        } else if (statusStr == 'already_processed') {
-          debugPrint(
-              '[WebLoginPage] Parallel captcha: already processed this image src');
-          break;
-        } else if (statusStr == 'visible_loading') {
-          captchaRequired = true;
-          // Captcha is visible but image is not loaded yet, keep polling
-          debugPrint(
-              '[WebLoginPage] Parallel captcha: Visible but image loading...');
-        } else if (statusStr == 'visible') {
-          // Captcha is visible but the image could not be extracted yet.
-          captchaRequired = true;
-          debugPrint(
-              '[WebLoginPage] Parallel captcha: Visible without image data');
-          break;
-        } else {
-          // Captcha is hidden
-          if (_autoFillDone) {
-            autofillCompleteTime ??= DateTime.now();
-            const waitDuration = Duration(milliseconds: 1000);
-            if (DateTime.now().difference(autofillCompleteTime) >
-                waitDuration) {
-              debugPrint(
-                  '[WebLoginPage] Parallel captcha: No captcha required after wait post-autofill.');
-              break;
-            }
-          }
-        }
-
-        await Future.delayed(pollInterval);
-      }
-    }
-
-    try {
-      // Run both in parallel
-      await Future.wait([
-        doAutofill(),
-        doCaptchaSolving(),
-      ]);
-
-      if (!mounted || _done) return;
-
-      if (autofillSuccess) {
-        if (captchaRequired) {
-          if (solvedCaptchaText != null && solvedCaptchaText!.isNotEmpty) {
-            if (mounted) {
-              setState(() {
-                _status = '已识别验证码 ($solvedCaptchaText)，正在自动登录…';
-              });
-            }
-            final c = _escapeJs(solvedCaptchaText!);
-            await _controller.runJavaScript('''
-              (function() {
-                document.querySelectorAll('input[name="captcha"]').forEach(function(el) {
-                  el.value = '$c';
-                  el.dispatchEvent(new Event('input',  {bubbles:true}));
-                  el.dispatchEvent(new Event('change', {bubbles:true}));
-                });
-              })();
-            ''');
-            await Future.delayed(const Duration(milliseconds: 150));
-            await _clickLogin();
-          } else {
-            if (mounted) {
-              setState(() {
-                _status = '请手动输入验证码并点击登录。';
-              });
-            }
-          }
-        } else {
-          // No captcha required
-          if (mounted) {
-            setState(() {
-              _status = '无需验证码，正在自动登录…';
-            });
-          }
-          await _clickLogin();
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _status = '自动填充账号密码失败，请手动输入。';
-          });
-        }
-      }
-    } catch (e) {
       if (mounted) {
         setState(() {
-          _status = '自动填充失败：$e';
+          _status = '未配置账号密码，请手动登录。';
+          _showWebContent = true;
         });
       }
+      return;
+    }
+
+    final automationSource = _automationSource;
+    final trajectoryDataUrl = _trajectoryDataUrl;
+    if (automationSource == null || trajectoryDataUrl == null) {
+      if (mounted) {
+        setState(() {
+          _status = '自动登录资源不可用，请手动登录。';
+          _showWebContent = true;
+        });
+      }
+      _reportAutomaticLoginFailure(
+        const AutomaticLoginFailure(
+          AutomaticLoginFailureType.other,
+          '自动登录资源不可用',
+        ),
+      );
+      return;
+    }
+
+    // A rejected username/password submission reloads the unified-auth page.
+    // Persisting this marker in sessionStorage lets the new page distinguish
+    // that reload from the initial visit instead of starting another slider
+    // attempt from scratch.
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function () {
+  const key = 'nju_slider_login_submitted';
+  const submitted = sessionStorage.getItem(key) === '1';
+  if (submitted) sessionStorage.removeItem(key);
+  return submitted;
+})();
+''');
+      final submitted = result == true ||
+          result.toString().replaceAll('"', '').trim().toLowerCase() == 'true';
+      if (submitted) {
+        if (mounted) {
+          setState(() {
+            _status = '账号或密码有误。';
+            _showWebContent = true;
+          });
+        }
+        _reportAutomaticLoginFailure(
+          const AutomaticLoginFailure(
+            AutomaticLoginFailureType.invalidCredentials,
+            'NJU_INVALID_CREDENTIALS',
+          ),
+        );
+        return;
+      }
+    } catch (error) {
+      debugPrint(
+        '[WebLoginPage] Failed to inspect previous login submission: $error',
+      );
+    }
+
+    _autoFilling = true;
+    if (mounted) setState(() => _status = '正在启动完整自动登录流程…');
+
+    try {
+      final bootstrap = _buildChromeCompatibilityLayer(trajectoryDataUrl);
+      await _controller.runJavaScript('$bootstrap\n$automationSource');
+      _autoFillDone = true;
+    } catch (error) {
+      debugPrint('[WebLoginPage] Failed to inject automation: $error');
+      if (mounted) {
+        setState(() {
+          _status = '启动自动登录失败：$error';
+          _showWebContent = true;
+        });
+      }
+      _reportAutomaticLoginFailure(
+        AutomaticLoginFailure(
+          AutomaticLoginFailureType.other,
+          error.toString(),
+        ),
+      );
     } finally {
       _autoFilling = false;
     }
   }
 
-  /// Clicks the login button by calling the page's own startLogin function.
-  Future<void> _clickLogin() async {
-    debugPrint('[WebLoginPage] Clicking login button');
-    await _controller.runJavaScript('''
-      (function() {
-        var btns = document.querySelectorAll('#login_submit');
-        for (var i = 0; i < btns.length; i++) {
-          var btn = btns[i];
-          if (btn.offsetWidth > 0 || btn.offsetHeight > 0) {
-            if (typeof startLogin === 'function') {
-              startLogin(btn);
-            } else {
-              btn.click();
-            }
-            return;
-          }
-        }
-        // fallback: click any login_submit
-        if (btns.length > 0) {
-          if (typeof startLogin === 'function') {
-            startLogin(btns[0]);
-          } else {
-            btns[0].click();
-          }
-        }
-      })();
-    ''');
-    if (mounted) {
-      setState(() => _status = '已自动提交登录，等待页面跳转…');
+  Future<void> _fillCredentialsOnly() async {
+    if (_autoFillDone || _autoFilling || _done) return;
+    if (!widget.hasCredentials) {
+      if (mounted) setState(() => _status = '请手动输入账号密码并完成登录。');
+      return;
+    }
+
+    _autoFilling = true;
+    if (mounted) setState(() => _status = '正在自动填写学号和密码…');
+
+    final username = jsonEncode(widget.autoFillUsername);
+    final password = jsonEncode(widget.autoFillPassword);
+    try {
+      await _controller.runJavaScript('''
+(async function () {
+  if (window.__njuCredentialsOnlyInjected) return;
+  window.__njuCredentialsOnlyInjected = true;
+
+  const sleep = function (ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  };
+  const setNativeValue = function (element, value) {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    ).set;
+    element.removeAttribute('readonly');
+    element.removeAttribute('disabled');
+    setter.call(element, value);
+    element.dispatchEvent(new Event('input', {bubbles: true}));
+    element.dispatchEvent(new Event('change', {bubbles: true}));
+  };
+  const notify = function (action, detail) {
+    window.$_bridgeName.postMessage(JSON.stringify({
+      id: 'credentials-only',
+      message: {action: action, detail: detail || ''}
+    }));
+  };
+
+  try {
+    const deadline = Date.now() + 10000;
+    let loginView = null;
+    let usernameField = null;
+    while (Date.now() < deadline && !usernameField) {
+      loginView = document.querySelector('#loginViewDiv');
+      usernameField = loginView && (
+        loginView.querySelector('.m-account #username') ||
+        loginView.querySelector('#username')
+      );
+      if (!usernameField) {
+        const passwordTab = document.querySelector('#userNameLogin_a');
+        if (passwordTab) passwordTab.click();
+        await sleep(100);
+      }
+    }
+
+    if (!loginView || !usernameField) {
+      throw new Error('找不到统一认证账号输入框');
+    }
+    const passwordField =
+      loginView.querySelector('.m-account #password') ||
+      loginView.querySelector('#password');
+    if (!passwordField) throw new Error('找不到统一认证密码输入框');
+
+    setNativeValue(usernameField, $username);
+    setNativeValue(passwordField, $password);
+    usernameField.dispatchEvent(new Event('focusout', {bubbles: true}));
+    usernameField.dispatchEvent(new Event('blur', {bubbles: true}));
+    notify('credentialsOnlyComplete');
+  } catch (error) {
+    notify('credentialsOnlyFailed', error && error.message || String(error));
+  }
+})();
+''');
+      _autoFillDone = true;
+    } catch (error) {
+      if (mounted) setState(() => _status = '自动填写失败，请手动输入：$error');
+    } finally {
+      _autoFilling = false;
     }
   }
 
-  // --------------- Session detection ---------------
+  String _buildChromeCompatibilityLayer(String trajectoryDataUrl) {
+    final settingsJson = jsonEncode({
+      'nju_auto_login_pending': true,
+      'nju_auth_auto_login': true,
+      'nju_page_auto_login': true,
+      'nju_username': widget.autoFillUsername,
+      'nju_password': widget.autoFillPassword,
+      'nju_debug_mode': false,
+    });
+    final trajectoryJson = jsonEncode(trajectoryDataUrl);
+
+    return '''
+(function () {
+  if (window.__njuAutoAuthInjected) return;
+  window.__njuAutoAuthInjected = true;
+
+  const settings = $settingsJson;
+  const trajectoryUrl = $trajectoryJson;
+  const pending = new Map();
+  let nextRequestId = 1;
+  const nativeFetch = window.fetch.bind(window);
+
+  window.fetch = function (resource, options) {
+    const url = typeof resource === 'string' ? resource : resource && resource.url;
+    if (url === trajectoryUrl) {
+      const encoded = trajectoryUrl.substring(trajectoryUrl.indexOf(',') + 1);
+      return Promise.resolve(new Response(atob(encoded), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'}
+      }));
+    }
+    return nativeFetch(resource, options);
+  };
+
+  window.__njuFlutterResolve = function (id, response, error) {
+    const request = pending.get(id);
+    if (!request) return;
+    pending.delete(id);
+    if (error) request.reject(new Error(String(error)));
+    else request.resolve(response);
+  };
+
+  const runtime = {
+    lastError: null,
+    getURL: function (path) {
+      return path === 'recordings/3.json' ? trajectoryUrl : path;
+    },
+    sendMessage: function (message, callback) {
+      const id = nextRequestId++;
+      const promise = new Promise(function (resolve, reject) {
+        pending.set(id, {resolve: resolve, reject: reject});
+        window.$_bridgeName.postMessage(JSON.stringify({
+          id: id,
+          message: message
+        }));
+      });
+      if (typeof callback === 'function') {
+        promise.then(function (response) {
+          runtime.lastError = null;
+          callback(response);
+        }).catch(function (error) {
+          runtime.lastError = {message: String(error && error.message || error)};
+          callback(undefined);
+          runtime.lastError = null;
+        });
+      }
+      return promise;
+    }
+  };
+
+  window.chrome = window.chrome || {};
+  window.chrome.runtime = runtime;
+  window.chrome.storage = {
+    local: {
+      get: async function (keys) {
+        if (keys == null) return Object.assign({}, settings);
+        const requested = typeof keys === 'string' ? [keys] : keys;
+        if (Array.isArray(requested)) {
+          const result = {};
+          requested.forEach(function (key) {
+            if (Object.prototype.hasOwnProperty.call(settings, key)) {
+              result[key] = settings[key];
+            }
+          });
+          return result;
+        }
+        const result = Object.assign({}, requested);
+        Object.keys(requested).forEach(function (key) {
+          if (Object.prototype.hasOwnProperty.call(settings, key)) {
+            result[key] = settings[key];
+          }
+        });
+        return result;
+      }
+    }
+  };
+})();
+''';
+  }
+
+  Future<void> _handleBridgeMessage(JavaScriptMessage bridgeMessage) async {
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(bridgeMessage.message);
+    } catch (error) {
+      debugPrint('[WebLoginPage] Invalid bridge message: $error');
+      return;
+    }
+    if (decoded is! Map) return;
+
+    final id = decoded['id'];
+    final rawMessage = decoded['message'];
+    if (id == null || rawMessage is! Map) return;
+    final message = Map<String, dynamic>.from(rawMessage);
+    final action = message['action']?.toString() ?? '';
+
+    try {
+      switch (action) {
+        case 'contentLog':
+          _handleAutomationLog(
+            message['msg']?.toString() ?? '',
+            message['level']?.toString() ?? 'info',
+          );
+          await _replyToBridge(id, const <String, dynamic>{});
+          break;
+        case 'solveCaptcha':
+          await _solveCaptchaForBridge(id, message);
+          break;
+        case 'loginComplete':
+          _handleLoginCompleteMessage(message);
+          await _replyToBridge(id, const <String, dynamic>{});
+          break;
+        case 'recordSliderCaptchaDebug':
+          // Debug recording is deliberately disabled by the compatibility
+          // settings, but the extension API remains complete.
+          await _replyToBridge(id, const <String, dynamic>{'success': true});
+          break;
+        case 'credentialsOnlyComplete':
+          if (mounted) {
+            setState(() {
+              _status = '学号和密码已填写，请手动完成验证码并提交。';
+            });
+          }
+          break;
+        case 'credentialsOnlyFailed':
+          if (mounted) {
+            final detail = message['detail']?.toString() ?? '';
+            setState(() {
+              _status =
+                  detail.isEmpty ? '自动填写失败，请手动输入。' : '自动填写失败，请手动输入：$detail';
+            });
+          }
+          break;
+        default:
+          await _replyToBridge(id, const <String, dynamic>{});
+          break;
+      }
+    } catch (error, stackTrace) {
+      debugPrint('[WebLoginPage] Bridge action $action failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      await _replyToBridge(id, null, error: error.toString());
+    }
+  }
+
+  void _handleAutomationLog(String message, String level) {
+    debugPrint('[NJU Auto Auth][$level] $message');
+    if (!mounted || message.isEmpty) return;
+    setState(() {
+      _status = message;
+      if (level == 'error') _showWebContent = true;
+    });
+  }
+
+  Future<void> _solveCaptchaForBridge(
+    dynamic id,
+    Map<String, dynamic> message,
+  ) async {
+    final imageData = message['imageData']?.toString() ?? '';
+    final commaIndex = imageData.indexOf(',');
+    final base64Payload =
+        commaIndex >= 0 ? imageData.substring(commaIndex + 1) : imageData;
+    if (base64Payload.isEmpty) {
+      throw const FormatException('验证码图片为空');
+    }
+
+    if (mounted) {
+      setState(() {
+        _captchaSolving = true;
+        _status = '检测到字符验证码，正在使用内置 OCR 识别…';
+      });
+    }
+
+    try {
+      final Uint8List bytes = base64Decode(base64Payload);
+      final result = await OcrSolverService.solve(bytes);
+      await _replyToBridge(id, <String, dynamic>{'result': result});
+    } finally {
+      if (mounted) setState(() => _captchaSolving = false);
+    }
+  }
+
+  void _handleLoginCompleteMessage(Map<String, dynamic> message) {
+    if (!mounted) return;
+    final success = message['success'] == true;
+    final detail = message['message']?.toString() ?? '';
+    setState(() {
+      if (success) {
+        _status = '统一认证成功，正在进入课表系统…';
+      } else {
+        _status = detail.isEmpty ? '自动登录失败，请手动处理。' : '自动登录失败：$detail';
+        _showWebContent = true;
+      }
+    });
+    if (!success) {
+      final type = detail.contains('NJU_INVALID_CREDENTIALS')
+          ? AutomaticLoginFailureType.invalidCredentials
+          : detail.contains('NJU_SLIDER_FAILED_TWICE')
+              ? AutomaticLoginFailureType.sliderFailed
+              : AutomaticLoginFailureType.other;
+      _reportAutomaticLoginFailure(AutomaticLoginFailure(type, detail));
+    }
+  }
+
+  void _startPageLoadTimeout() {
+    if (!widget.automaticLogin ||
+        widget.onAutomaticLoginFailure == null ||
+        _failureReported) {
+      return;
+    }
+    _pageLoadTimeout?.cancel();
+    _pageLoadTimeout = Timer(const Duration(seconds: 5), () {
+      _reportAutomaticLoginFailure(
+        const AutomaticLoginFailure(
+          AutomaticLoginFailureType.network,
+          '学校网页加载超过 5 秒',
+        ),
+      );
+    });
+  }
+
+  void _reportAutomaticLoginFailure(AutomaticLoginFailure failure) {
+    if (_failureReported || !widget.automaticLogin) return;
+    _failureReported = true;
+    _automaticLoginTimeout?.cancel();
+    _pageLoadTimeout?.cancel();
+    widget.onAutomaticLoginFailure?.call(failure);
+  }
+
+  Future<void> _replyToBridge(
+    dynamic id,
+    Object? response, {
+    String? error,
+  }) async {
+    if (_done) return;
+    final script = 'window.__njuFlutterResolve && '
+        'window.__njuFlutterResolve(${jsonEncode(id)}, '
+        '${jsonEncode(response)}, ${jsonEncode(error)});';
+    await _controller.runJavaScript(script);
+  }
 
   Future<void> _tryCompleteFromCookies(String url) async {
-    if (_done || _checking) return;
-
-    // 同一个 URL 不重复检查，避免认证链条里疯狂触发
-    if (_lastCheckedUrl == url) return;
+    if (_done || _checking || _lastCheckedUrl == url) return;
     _lastCheckedUrl = url;
-
     _checking = true;
     try {
       final session = await widget.authService.readSessionFromWebView(
         schoolType: widget.schoolType,
         usernameHint: widget.usernameHint,
       );
-
       if (!mounted || _done) return;
-
       if (session != null) {
         _done = true;
-        Navigator.of(context).pop<SessionInfo>(session);
-        return;
+        _finishWithSession(session);
+      } else {
+        setState(() => _status = '登录成功，正在等待课表系统会话建立…');
       }
-
-      setState(() {
-        _status = '尚未检测到有效登录态，请继续完成登录。';
-      });
     } finally {
       _checking = false;
     }
@@ -596,36 +682,51 @@ class _WebLoginPageState extends State<WebLoginPage> {
 
   Future<void> _manualComplete() async {
     if (_done || _checking) return;
-
-    setState(() {
-      _status = '正在手动检查登录态…';
-    });
-
+    setState(() => _status = '正在检查登录状态…');
     _checking = true;
     try {
       final session = await widget.authService.readSessionFromWebView(
         schoolType: widget.schoolType,
         usernameHint: widget.usernameHint,
       );
-
       if (!mounted) return;
-
       if (session == null) {
-        setState(() {
-          _status = '还没有检测到有效登录态，请先在网页中完成登录。';
-        });
+        setState(() => _status = '尚未检测到有效登录状态，请先完成登录。');
         return;
       }
-
       _done = true;
-      Navigator.of(context).pop<SessionInfo>(session);
+      _finishWithSession(session);
     } finally {
       _checking = false;
     }
   }
 
+  void _finishWithSession(SessionInfo session) {
+    _automaticLoginTimeout?.cancel();
+    _pageLoadTimeout?.cancel();
+    final callback = widget.onSession;
+    if (callback != null) {
+      callback(session);
+      return;
+    }
+    Navigator.of(context).pop<SessionInfo>(session);
+  }
+
+  @override
+  void dispose() {
+    _automaticLoginTimeout?.cancel();
+    _pageLoadTimeout?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _initializing
+          ? const SizedBox.expand()
+          : WebViewWidget(controller: _controller);
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.schoolType.shortLabel}网页登录'),
@@ -636,7 +737,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
-            tooltip: '完成登录',
+            tooltip: '检查登录状态',
             onPressed: _initializing ? null : _manualComplete,
             icon: const Icon(Icons.check_circle_outline),
           ),
@@ -661,9 +762,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
                   ? const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : null,
             ),
@@ -689,8 +788,9 @@ class _WebLoginPageState extends State<WebLoginPage> {
                                     Icon(
                                       Icons.sync_lock_outlined,
                                       size: 52,
-                                      color:
-                                          Theme.of(context).colorScheme.primary,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
                                     ),
                                     const SizedBox(height: 20),
                                     const CircularProgressIndicator(),

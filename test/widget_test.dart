@@ -12,6 +12,7 @@ import 'package:nju_calendar_importer_flutter/pages/web_login_page.dart';
 import 'package:nju_calendar_importer_flutter/services/auth_service.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_sync_service.dart';
 import 'package:nju_calendar_importer_flutter/services/nju_schedule_service.dart';
+import 'package:nju_calendar_importer_flutter/services/settings_service.dart';
 import 'package:nju_calendar_importer_flutter/services/storage_service.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -122,15 +123,35 @@ class WidgetFakeAuthService extends AuthService {
   WidgetFakeAuthService({this.restoredSession}) : super(StorageService());
 
   final SessionInfo? restoredSession;
+  var clearSessionCalls = 0;
+  var clearWebViewCookiesCalls = 0;
 
   @override
   Future<SessionInfo?> restoreSession() async => restoredSession;
 
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession() async {
+    clearSessionCalls += 1;
+  }
 
   @override
-  Future<void> clearWebViewCookies() async {}
+  Future<void> clearWebViewCookies() async {
+    clearWebViewCookiesCalls += 1;
+  }
+}
+
+class WidgetFakeSettingsService extends SettingsService {
+  WidgetFakeSettingsService(this.settings);
+
+  AutoLoginSettings settings;
+
+  @override
+  Future<AutoLoginSettings> loadAll() async => settings;
+
+  @override
+  Future<void> saveAll(AutoLoginSettings settings) async {
+    this.settings = settings;
+  }
 }
 
 class WidgetFakeScheduleService extends NjuScheduleService {
@@ -220,18 +241,21 @@ class WidgetFakeCalendarSyncService extends CalendarSyncService {
 }
 
 class WidgetFakeWebViewPlatform extends WebViewPlatform {
+  WidgetFakePlatformNavigationDelegate? navigationDelegate;
+  WidgetFakePlatformWebViewController? controller;
+
   @override
   PlatformNavigationDelegate createPlatformNavigationDelegate(
     PlatformNavigationDelegateCreationParams params,
   ) {
-    return WidgetFakePlatformNavigationDelegate(params);
+    return navigationDelegate = WidgetFakePlatformNavigationDelegate(params);
   }
 
   @override
   PlatformWebViewController createPlatformWebViewController(
     PlatformWebViewControllerCreationParams params,
   ) {
-    return WidgetFakePlatformWebViewController(params);
+    return controller = WidgetFakePlatformWebViewController(params);
   }
 
   @override
@@ -243,9 +267,9 @@ class WidgetFakeWebViewPlatform extends WebViewPlatform {
 }
 
 class WidgetFakePlatformNavigationDelegate extends PlatformNavigationDelegate {
-  WidgetFakePlatformNavigationDelegate(
-    super.params,
-  ) : super.implementation();
+  WidgetFakePlatformNavigationDelegate(super.params) : super.implementation();
+
+  PageEventCallback? onPageFinished;
 
   @override
   Future<void> setOnNavigationRequest(
@@ -256,7 +280,9 @@ class WidgetFakePlatformNavigationDelegate extends PlatformNavigationDelegate {
   Future<void> setOnPageStarted(PageEventCallback onPageStarted) async {}
 
   @override
-  Future<void> setOnPageFinished(PageEventCallback onPageFinished) async {}
+  Future<void> setOnPageFinished(PageEventCallback onPageFinished) async {
+    this.onPageFinished = onPageFinished;
+  }
 
   @override
   Future<void> setOnProgress(ProgressCallback onProgress) async {}
@@ -268,12 +294,32 @@ class WidgetFakePlatformNavigationDelegate extends PlatformNavigationDelegate {
 }
 
 class WidgetFakePlatformWebViewController extends PlatformWebViewController {
-  WidgetFakePlatformWebViewController(
-    super.params,
-  ) : super.implementation();
+  WidgetFakePlatformWebViewController(super.params) : super.implementation();
+
+  final scripts = <String>[];
+  JavaScriptChannelParams? javaScriptChannel;
+  Object javaScriptResult = false;
 
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
+
+  @override
+  Future<void> addJavaScriptChannel(
+    JavaScriptChannelParams javaScriptChannelParams,
+  ) async {
+    javaScriptChannel = javaScriptChannelParams;
+  }
+
+  @override
+  Future<void> runJavaScript(String javaScript) async {
+    scripts.add(javaScript);
+  }
+
+  @override
+  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+    scripts.add(javaScript);
+    return javaScriptResult;
+  }
 
   @override
   Future<void> setPlatformNavigationDelegate(
@@ -339,11 +385,7 @@ UndergradSemesterOptions _semesterOptions() {
     currentSemesterName: current.name,
     semesters: [
       current,
-      _semester(
-        id: '2025-2026-1',
-        name: '2025-2026学年 第1学期',
-        isCurrent: false,
-      ),
+      _semester(id: '2025-2026-1', name: '2025-2026学年 第1学期', isCurrent: false),
     ],
   );
 }
@@ -388,6 +430,28 @@ ScheduleBundle _emptyBundleFor(NjuSemester semester) {
     courseCount: 0,
     examCount: 0,
   );
+}
+
+Future<WebLoginPage> _startBackgroundLogin(WidgetTester tester) async {
+  SharedPreferences.setMockInitialValues({'privacy_policy_accepted_v3': true});
+  WebViewPlatform.instance = WidgetFakeWebViewPlatform();
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: HomePage(
+        authService: WidgetFakeAuthService(),
+        scheduleService: WidgetFakeScheduleService(options: _semesterOptions()),
+        calendarSyncService: WidgetFakeCalendarSyncService(),
+        settingsService: WidgetFakeSettingsService(
+          const AutoLoginSettings(username: '123456789', password: 'password'),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('拉取学期信息'));
+  await tester.pump();
+  return tester.widget<WebLoginPage>(find.byType(WebLoginPage));
 }
 
 void main() {
@@ -441,7 +505,7 @@ void main() {
     'restored undergrad session shows semester picker before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -474,7 +538,7 @@ void main() {
     'fetching selected undergrad semester reveals calendar sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -509,7 +573,7 @@ void main() {
     'undergrad current-semester fallback warns before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final scheduleService = WidgetFakeScheduleService(
         options: _semesterOptionsWithMissingCurrent(),
@@ -538,7 +602,7 @@ void main() {
     'selecting a non-current undergrad semester forwards full fetch arguments',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -576,7 +640,7 @@ void main() {
     'restored graduate session shows semester card before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -612,7 +676,7 @@ void main() {
     'empty selected undergrad semester shows dialog without sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
+        'privacy_policy_accepted_v3': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(
@@ -641,10 +705,11 @@ void main() {
     },
   );
 
-  testWidgets('current-semester delete prompts when no calendar is selected',
-      (WidgetTester tester) async {
+  testWidgets('current-semester delete prompts when no calendar is selected', (
+    WidgetTester tester,
+  ) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_v2': true,
+      'privacy_policy_accepted_v3': true,
     });
 
     await tester.pumpWidget(
@@ -653,8 +718,9 @@ void main() {
           authService: WidgetFakeAuthService(
             restoredSession: _undergradSession(),
           ),
-          scheduleService:
-              WidgetFakeScheduleService(options: _semesterOptions()),
+          scheduleService: WidgetFakeScheduleService(
+            options: _semesterOptions(),
+          ),
           calendarSyncService: WidgetFakeCalendarSyncService(),
         ),
       ),
@@ -674,86 +740,240 @@ void main() {
     expect(find.text('请先选择一个系统日历。'), findsOneWidget);
   });
 
-  testWidgets(
-    'current-semester delete confirms before calling service',
-    (WidgetTester tester) async {
-      SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_v2': true,
-      });
-      final calendarSyncService = WidgetFakeCalendarSyncService(
-        calendars: const [
-          Calendar(id: 'target-calendar', name: '个人日历', readOnly: false),
-        ],
-        deletedCount: 3,
-      );
-      final options = _semesterOptions();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomePage(
-            authService: WidgetFakeAuthService(
-              restoredSession: _undergradSession(),
-            ),
-            scheduleService: WidgetFakeScheduleService(options: options),
-            calendarSyncService: calendarSyncService,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('拉取所选学期课表'));
-      await tester.pumpAndSettle();
-      await tester.pump(const Duration(seconds: 4));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('加载手机日历'));
-      await tester.tap(find.widgetWithText(OutlinedButton, '加载手机日历'));
-      await tester.pumpAndSettle();
-
-      final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
-      await tester.ensureVisible(deleteButton);
-      await tester.tap(deleteButton);
-      await tester.pumpAndSettle();
-
-      expect(find.text('删除当前学期导入日程'), findsWidgets);
-      expect(find.textContaining('2025-2026学年 第2学期'), findsWidgets);
-
-      await tester.tap(find.widgetWithText(TextButton, '取消'));
-      await tester.pumpAndSettle();
-
-      expect(calendarSyncService.deleteCalls, 0);
-
-      await tester.ensureVisible(deleteButton);
-      await tester.tap(deleteButton);
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, '确认删除'));
-      await tester.pumpAndSettle();
-
-      expect(calendarSyncService.deleteCalls, 1);
-      expect(calendarSyncService.deletedCalendarId, 'target-calendar');
-      expect(calendarSyncService.deletedBundle?.semesterId, '2025-2026-2');
-      expect(find.text('已删除 3 条当前学期导入日程。'), findsOneWidget);
-    },
-  );
-
-  testWidgets('web login page removes footer buttons but keeps app bar actions',
-      (WidgetTester tester) async {
-    WebViewPlatform.instance = WidgetFakeWebViewPlatform();
+  testWidgets('current-semester delete confirms before calling service', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_v3': true,
+    });
+    final calendarSyncService = WidgetFakeCalendarSyncService(
+      calendars: const [
+        Calendar(id: 'target-calendar', name: '个人日历', readOnly: false),
+      ],
+      deletedCount: 3,
+    );
+    final options = _semesterOptions();
 
     await tester.pumpWidget(
       MaterialApp(
-        home: WebLoginPage(
-          schoolType: SchoolType.undergrad,
-          authService: WidgetFakeAuthService(),
-          usernameHint: '',
+        home: HomePage(
+          authService: WidgetFakeAuthService(
+            restoredSession: _undergradSession(),
+          ),
+          scheduleService: WidgetFakeScheduleService(options: options),
+          calendarSyncService: calendarSyncService,
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('取消'), findsNothing);
-    expect(find.text('我已完成登录'), findsNothing);
-    expect(find.byIcon(Icons.refresh), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
-    expect(find.byKey(const Key('fake-webview')), findsOneWidget);
+    await tester.tap(find.text('拉取所选学期课表'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('加载手机日历'));
+    await tester.tap(find.widgetWithText(OutlinedButton, '加载手机日历'));
+    await tester.pumpAndSettle();
+
+    final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
+    await tester.ensureVisible(deleteButton);
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除当前学期导入日程'), findsWidgets);
+    expect(find.textContaining('2025-2026学年 第2学期'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+
+    expect(calendarSyncService.deleteCalls, 0);
+
+    await tester.ensureVisible(deleteButton);
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '确认删除'));
+    await tester.pumpAndSettle();
+
+    expect(calendarSyncService.deleteCalls, 1);
+    expect(calendarSyncService.deletedCalendarId, 'target-calendar');
+    expect(calendarSyncService.deletedBundle?.semesterId, '2025-2026-2');
+    expect(find.text('已删除 3 条当前学期导入日程。'), findsOneWidget);
+  });
+
+  testWidgets(
+    'web login page removes footer buttons but keeps app bar actions',
+    (WidgetTester tester) async {
+      WebViewPlatform.instance = WidgetFakeWebViewPlatform();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WebLoginPage(
+            schoolType: SchoolType.undergrad,
+            authService: WidgetFakeAuthService(),
+            usernameHint: '',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('取消'), findsNothing);
+      expect(find.text('我已完成登录'), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
+      expect(find.byKey(const Key('fake-webview')), findsOneWidget);
+    },
+  );
+
+  testWidgets('saving unchanged credentials keeps the current session', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_v3': true,
+    });
+    final authService = WidgetFakeAuthService(
+      restoredSession: _undergradSession(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          authService: authService,
+          scheduleService: WidgetFakeScheduleService(
+            options: _semesterOptions(),
+          ),
+          calendarSyncService: WidgetFakeCalendarSyncService(),
+          settingsService: WidgetFakeSettingsService(
+            const AutoLoginSettings(
+              username: '123456789',
+              password: 'password',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('配置登录信息'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存登录信息'));
+    await tester.pumpAndSettle();
+
+    expect(authService.clearSessionCalls, 0);
+    expect(authService.clearWebViewCookiesCalls, 0);
+    expect(find.text('课表学期'), findsOneWidget);
+    expect(find.text('登录信息未变化，已保留当前登录态。'), findsOneWidget);
+  });
+
+  testWidgets('changing credentials clears the current session', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_v3': true,
+    });
+    final authService = WidgetFakeAuthService(
+      restoredSession: _undergradSession(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          authService: authService,
+          scheduleService: WidgetFakeScheduleService(
+            options: _semesterOptions(),
+          ),
+          calendarSyncService: WidgetFakeCalendarSyncService(),
+          settingsService: WidgetFakeSettingsService(
+            const AutoLoginSettings(
+              username: '123456789',
+              password: 'password',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('配置登录信息'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'new-password');
+    await tester.tap(find.text('保存登录信息'));
+    await tester.pumpAndSettle();
+
+    expect(authService.clearSessionCalls, 1);
+    expect(authService.clearWebViewCookiesCalls, 1);
+    expect(find.text('课表学期'), findsNothing);
+    expect(find.text('登录信息已保存，请拉取学期信息。'), findsOneWidget);
+  });
+
+  testWidgets('semester fetch keeps automatic login embedded on home page', (
+    WidgetTester tester,
+  ) async {
+    final backgroundPage = await _startBackgroundLogin(tester);
+    expect(find.text('拉取学期信息'), findsOneWidget);
+    expect(find.byType(WebLoginPage), findsOneWidget);
+    expect(backgroundPage.embedded, isTrue);
+
+    backgroundPage.onAutomaticLoginFailure!.call(
+      const AutomaticLoginFailure(
+        AutomaticLoginFailureType.sliderFailed,
+        'NJU_SLIDER_FAILED_TWICE',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('自动登录失败'), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '手动登录'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '手动登录'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final manualPage = tester.widget<WebLoginPage>(
+      find.byType(WebLoginPage).last,
+    );
+    expect(manualPage.embedded, isFalse);
+    expect(manualPage.automaticLogin, isFalse);
+  });
+
+  testWidgets('school page connection failure shows network dialog', (
+    WidgetTester tester,
+  ) async {
+    final backgroundPage = await _startBackgroundLogin(tester);
+
+    backgroundPage.onAutomaticLoginFailure!.call(
+      const AutomaticLoginFailure(
+        AutomaticLoginFailureType.network,
+        '学校网页加载超过 5 秒',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('无法连接至学校网页'), findsOneWidget);
+    expect(find.text('请检查网络连接。'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '知道了'), findsOneWidget);
+    expect(find.text('手动登录'), findsNothing);
+  });
+
+  testWidgets('post-slider login failure shows credential error', (
+    WidgetTester tester,
+  ) async {
+    final backgroundPage = await _startBackgroundLogin(tester);
+
+    backgroundPage.onAutomaticLoginFailure!.call(
+      const AutomaticLoginFailure(
+        AutomaticLoginFailureType.invalidCredentials,
+        'NJU_INVALID_CREDENTIALS',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('账号或密码有误'), findsOneWidget);
+    expect(find.text('滑动验证码已通过，但未能完成登录。请检查保存的学号和密码。'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '知道了'), findsOneWidget);
+    expect(find.text('手动登录'), findsNothing);
   });
 }

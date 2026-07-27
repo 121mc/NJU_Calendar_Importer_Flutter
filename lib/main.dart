@@ -129,18 +129,20 @@ class HomePage extends StatefulWidget {
     this.authService,
     this.scheduleService,
     this.calendarSyncService,
+    this.settingsService,
   });
 
   final AuthService? authService;
   final NjuScheduleService? scheduleService;
   final CalendarSyncService? calendarSyncService;
+  final SettingsService? settingsService;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  static const _privacyAcceptedKey = 'privacy_policy_accepted_v2';
+  static const _privacyAcceptedKey = 'privacy_policy_accepted_v3';
 
   late final StorageService _storageService;
   late final AuthService _authService;
@@ -170,6 +172,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _privacyReady = false;
   bool _privacyDialogShowing = false;
   bool _bootstrapDone = false;
+  int _backgroundLoginAttempt = 0;
 
   AutoLoginSettings _autoLoginSettings = const AutoLoginSettings();
 
@@ -179,7 +182,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     _storageService = StorageService();
-    _settingsService = SettingsService();
+    _settingsService = widget.settingsService ?? SettingsService();
     _authService = widget.authService ?? AuthService(_storageService);
     _scheduleService =
         widget.scheduleService ?? NjuScheduleService(_authService);
@@ -238,28 +241,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _openSettingsDialog() async {
+    await _loadAutoLoginSettings();
+    if (!mounted) return;
+    final previousSettings = _autoLoginSettings;
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => SettingsDialog(settingsService: _settingsService),
     );
     if (saved == true) {
       await _loadAutoLoginSettings();
-      if (mounted) {
-        await _authService.clearSession();
-        await _authService.clearWebViewCookies();
-        setState(() {
-          _schoolType = SchoolType.fromStudentId(_autoLoginSettings.username) ??
-              SchoolType.undergrad;
-          _session = null;
-          _bundle = null;
-          _semesterOptions = const [];
-          _selectedSemester = null;
-          _semesterOptionsLoaded = false;
-          _calendars = const [];
-          _selectedCalendarId = null;
-        });
-        _showSnackBar('登录信息已保存，请拉取学期信息。');
+      if (!mounted) return;
+
+      final credentialsChanged =
+          previousSettings.username != _autoLoginSettings.username ||
+              previousSettings.password != _autoLoginSettings.password;
+      if (!credentialsChanged) {
+        _showSnackBar('登录信息未变化，已保留当前登录态。');
+        return;
       }
+
+      await _authService.clearSession();
+      await _authService.clearWebViewCookies();
+      if (!mounted) return;
+      setState(() {
+        _schoolType = SchoolType.fromStudentId(_autoLoginSettings.username) ??
+            SchoolType.undergrad;
+        _session = null;
+        _bundle = null;
+        _semesterOptions = const [];
+        _selectedSemester = null;
+        _semesterOptionsLoaded = false;
+        _calendars = const [];
+        _selectedCalendarId = null;
+      });
+      _showSnackBar('登录信息已保存，请拉取学期信息。');
     }
   }
 
@@ -284,8 +299,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               content: const SingleChildScrollView(
                 child: Text(
                   '欢迎使用“呢喃课表导入”。\n\n'
-                  '隐私政策说明了本地保存的登录信息、内置 OCR、课表与日历数据处理方式。\n\n'
-                  '请阅读并同意新版《隐私政策》后继续使用。本应用不包含广告或内购，也不会将你的账号、课表内容或日历数据上传到开发者自建服务器。',
+                  '新版隐私政策说明了自动登录、内嵌 WebView、本地字符与滑块验证码处理、登录态、课表和系统日历的数据处理方式。\n\n'
+                  '请阅读并同意新版《隐私政策》后继续使用。本应用不会将你的账号、验证码、课表内容或日历数据上传到开发者自建服务器。',
                 ),
               ),
               actions: [
@@ -447,6 +462,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() {
       _schoolType = schoolType;
       _loggingIn = true;
+      _backgroundLoginAttempt += 1;
       _session = null;
       _bundle = null;
       _semesterOptions = const [];
@@ -455,48 +471,128 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _calendars = const [];
       _selectedCalendarId = null;
     });
-    try {
-      final session = await Navigator.of(context).push<SessionInfo>(
-        MaterialPageRoute(
-          builder: (_) => WebLoginPage(
-            schoolType: _schoolType,
-            authService: _authService,
-            usernameHint: _autoLoginSettings.username,
-            autoFillUsername: _autoLoginSettings.hasCredentials
-                ? _autoLoginSettings.username
-                : null,
-            autoFillPassword: _autoLoginSettings.hasCredentials
-                ? _autoLoginSettings.password
-                : null,
-            backgroundLogin: true,
-          ),
-        ),
-      );
+  }
 
-      if (!mounted || session == null) return;
+  Future<void> _handleBackgroundLoginSuccess(
+    int attempt,
+    SessionInfo session,
+  ) async {
+    if (!mounted || !_loggingIn || attempt != _backgroundLoginAttempt) return;
+    setState(() {
+      _loggingIn = false;
+      _session = session;
+      _schoolType = session.schoolType;
+      _bundle = null;
+      _semesterOptions = const [];
+      _selectedSemester = null;
+      _semesterOptionsLoaded = false;
+      _calendars = const [];
+      _selectedCalendarId = null;
+    });
+    _showSnackBar('登录成功，已保存登录态。');
+    await _prepareScheduleForSession();
+  }
 
-      setState(() {
-        _session = session;
-        _schoolType = session.schoolType;
-        _bundle = null;
-        _semesterOptions = const [];
-        _selectedSemester = null;
-        _semesterOptionsLoaded = false;
-        _calendars = const [];
-        _selectedCalendarId = null;
-      });
-      _showSnackBar('登录成功，已保存登录态。');
-      await _prepareScheduleForSession();
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar('网页登录失败：$e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loggingIn = false;
-        });
-      }
+  Future<void> _handleBackgroundLoginFailure(
+    int attempt,
+    AutomaticLoginFailure failure,
+  ) async {
+    if (!mounted || !_loggingIn || attempt != _backgroundLoginAttempt) return;
+    setState(() => _loggingIn = false);
+
+    late final String title;
+    late final String message;
+    late final bool offersManualLogin;
+    switch (failure.type) {
+      case AutomaticLoginFailureType.network:
+        title = '无法连接至学校网页';
+        message = '请检查网络连接。';
+        offersManualLogin = false;
+        break;
+      case AutomaticLoginFailureType.invalidCredentials:
+        title = '账号或密码有误';
+        message = '滑动验证码已通过，但未能完成登录。请检查保存的学号和密码。';
+        offersManualLogin = false;
+        break;
+      case AutomaticLoginFailureType.sliderFailed:
+        title = '自动登录失败';
+        message = '连续两次滑动验证码均未通过，请改用手动登录。';
+        offersManualLogin = true;
+        break;
+      case AutomaticLoginFailureType.other:
+        title = '自动登录失败';
+        message = failure.detail.trim().isEmpty
+            ? '多次尝试后仍未能完成统一身份认证。'
+            : '多次尝试后仍未能完成统一身份认证。\n\n${failure.detail}';
+        offersManualLogin = true;
+        break;
     }
+
+    final openManualLogin = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              titlePadding: const EdgeInsets.fromLTRB(24, 16, 8, 0),
+              title: Row(
+                children: [
+                  Expanded(child: Text(title)),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(message),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: () =>
+                        Navigator.of(dialogContext).pop(offersManualLogin),
+                    child: Text(offersManualLogin ? '手动登录' : '知道了'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ) ??
+        false;
+
+    if (openManualLogin && mounted) {
+      await _openManualWebLogin();
+    }
+  }
+
+  Future<void> _openManualWebLogin() async {
+    final session = await Navigator.of(context).push<SessionInfo>(
+      MaterialPageRoute(
+        builder: (_) => WebLoginPage(
+          schoolType: _schoolType,
+          authService: _authService,
+          usernameHint: _autoLoginSettings.username,
+          autoFillUsername: _autoLoginSettings.username,
+          autoFillPassword: _autoLoginSettings.password,
+          automaticLogin: false,
+        ),
+      ),
+    );
+    if (!mounted || session == null) return;
+
+    setState(() {
+      _session = session;
+      _schoolType = session.schoolType;
+      _bundle = null;
+      _semesterOptions = const [];
+      _selectedSemester = null;
+      _semesterOptionsLoaded = false;
+      _calendars = const [];
+      _selectedCalendarId = null;
+    });
+    _showSnackBar('登录成功，已保存登录态。');
+    await _prepareScheduleForSession();
   }
 
   Future<void> _loadSemesterOptions() async {
@@ -751,6 +847,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final backgroundLoginAttempt = _backgroundLoginAttempt;
     return Scaffold(
       appBar: AppBar(
         title: const Text('呢喃课表导入'),
@@ -762,26 +859,58 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: !_privacyReady
-          ? const Center(child: CircularProgressIndicator())
-          : !_privacyAccepted
-              ? _buildPrivacyBlockedView()
-              : SafeArea(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    children: [
-                      _buildControlCard(),
-                      if (_session != null) ...[
-                        const SizedBox(height: 12),
-                        _buildSemesterCard(),
-                      ],
-                      if (_bundle != null) ...[
-                        const SizedBox(height: 12),
-                        _buildCalendarCard(),
-                      ],
-                    ],
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: !_privacyReady
+                ? const Center(child: CircularProgressIndicator())
+                : !_privacyAccepted
+                    ? _buildPrivacyBlockedView()
+                    : SafeArea(
+                        child: ListView(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          children: [
+                            _buildControlCard(),
+                            if (_session != null) ...[
+                              const SizedBox(height: 12),
+                              _buildSemesterCard(),
+                            ],
+                            if (_bundle != null) ...[
+                              const SizedBox(height: 12),
+                              _buildCalendarCard(),
+                            ],
+                          ],
+                        ),
+                      ),
+          ),
+          if (_loggingIn && _privacyAccepted)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0,
+                  child: WebLoginPage(
+                    key: ValueKey(backgroundLoginAttempt),
+                    schoolType: _schoolType,
+                    authService: _authService,
+                    usernameHint: _autoLoginSettings.username,
+                    autoFillUsername: _autoLoginSettings.username,
+                    autoFillPassword: _autoLoginSettings.password,
+                    embedded: true,
+                    onSession: (session) => _handleBackgroundLoginSuccess(
+                      backgroundLoginAttempt,
+                      session,
+                    ),
+                    onAutomaticLoginFailure: (detail) =>
+                        _handleBackgroundLoginFailure(
+                      backgroundLoginAttempt,
+                      detail,
+                    ),
                   ),
                 ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
