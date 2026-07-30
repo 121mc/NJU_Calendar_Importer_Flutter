@@ -248,7 +248,8 @@
     const points = (await response.json()).filter(point =>
       Number.isFinite(point?.x) && Number.isFinite(point?.y)
     );
-    if (points.length < 2 || Math.abs(points.at(-1).x - points[0].x) < 1) {
+    const lastPoint = points[points.length - 1];
+    if (points.length < 2 || Math.abs(lastPoint.x - points[0].x) < 1) {
       throw new Error(`Invalid slider trajectory ${filename}`);
     }
     return { filename, points };
@@ -285,7 +286,7 @@
 
   function scaleSliderTrajectory(points, dragDistance, sliderTravel) {
     const first = points[0];
-    const last = points.at(-1);
+    const last = points[points.length - 1];
     const horizontalScale = dragDistance / (last.x - first.x);
     const maxVerticalOffset = points.reduce(
       (maximum, point) => Math.max(maximum, Math.abs(point.y - first.y)),
@@ -319,6 +320,125 @@
     };
   }
 
+  function isAppleTouchPlatform() {
+    const platform = navigator.platform || '';
+    const userAgent = navigator.userAgent || '';
+    return /iPad|iPhone|iPod/.test(platform) ||
+           /iPad|iPhone|iPod/.test(userAgent) ||
+           (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function createTouchDragEvent(type, target, clientX, clientY) {
+    const touchOptions = {
+      identifier: 1, target, clientX, clientY,
+      screenX: clientX, screenY: clientY,
+      pageX: clientX + window.scrollX,
+      pageY: clientY + window.scrollY,
+      radiusX: 1, radiusY: 1, rotationAngle: 0,
+      force: type === 'touchend' ? 0 : 0.5
+    };
+    let touch = touchOptions;
+    if (typeof Touch === 'function') {
+      try {
+        touch = new Touch(touchOptions);
+      } catch (error) {
+        // Fall through to the plain touch-shaped object below.
+      }
+    }
+    const activeTouches = type === 'touchend' ? [] : [touch];
+    if (typeof TouchEvent === 'function') {
+      try {
+        return new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          touches: activeTouches,
+          targetTouches: activeTouches,
+          changedTouches: [touch]
+        });
+      } catch (error) {
+        // Fall through to an Event with explicit touch lists.
+      }
+    }
+
+    // Older WKWebView versions expose touch listeners but not constructible
+    // Touch/TouchEvent classes. A regular Event with touch lists is sufficient
+    // for Longbow's handlers, which only read the touch coordinates.
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      touches: { value: activeTouches },
+      targetTouches: { value: activeTouches },
+      changedTouches: { value: [touch] }
+    });
+    return event;
+  }
+
+  function startSliderDrag(slider, clientX, clientY) {
+    if (isAppleTouchPlatform()) {
+      try {
+        slider.dispatchEvent(createTouchDragEvent(
+          'touchstart',
+          slider,
+          clientX,
+          clientY
+        ));
+        return 'touch';
+      } catch (error) {
+        log(`Synthetic touch unavailable; falling back to mouse events: ${error}`, 'warn');
+      }
+    }
+
+    slider.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      buttons: 1
+    }));
+    return 'mouse';
+  }
+
+  function moveSliderDrag(inputMode, slider, clientX, clientY) {
+    if (inputMode === 'touch') {
+      slider.dispatchEvent(createTouchDragEvent(
+        'touchmove',
+        slider,
+        clientX,
+        clientY
+      ));
+      return;
+    }
+    document.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      buttons: 1
+    }));
+  }
+
+  function endSliderDrag(inputMode, slider, clientX, clientY) {
+    if (inputMode === 'touch') {
+      slider.dispatchEvent(createTouchDragEvent(
+        'touchend',
+        slider,
+        clientX,
+        clientY
+      ));
+      return;
+    }
+    document.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      buttons: 0
+    }));
+  }
+
   async function dragSlider(elements, targetLeft, attempt) {
     const { slider, sliderContainer, backgroundCanvas } = elements;
     const sliderRect = slider.getBoundingClientRect();
@@ -340,13 +460,10 @@
     const trajectoryLoadAndScaleMs = performance.now() - trajectoryLoadStartedAt;
 
     sliderInteractionStarted = true;
-    slider.dispatchEvent(new MouseEvent('mousedown', {
-      bubbles: true, cancelable: true, clientX: startX, clientY: startY, buttons: 1
-    }));
-
+    const inputMode = startSliderDrag(slider, startX, startY);
 
     const requestedDurationMs = (trajectory.length - 1) * sliderTrajectoryIntervalMs;
-    log(`Using slider trajectory ${recorded.filename} (${trajectory.length} raw points, ${sliderTrajectoryIntervalMs}ms/point)`);
+    log(`Using slider trajectory ${recorded.filename} (${trajectory.length} raw points, ${sliderTrajectoryIntervalMs}ms/point, ${inputMode} events)`);
 
     // Preserve the 1ms trajectory timeline without flooding the task queue.
     // Each animation frame dispatches due points with a safety cap, leaving the
@@ -364,13 +481,12 @@
         while (lastDispatchedIndex < targetIndex) {
           lastDispatchedIndex += 1;
           const point = trajectory[lastDispatchedIndex];
-          document.dispatchEvent(new MouseEvent('mousemove', {
-            bubbles: true,
-            cancelable: true,
-            clientX: startX + point.x,
-            clientY: startY + point.y,
-            buttons: 1
-          }));
+          moveSliderDrag(
+            inputMode,
+            slider,
+            startX + point.x,
+            startY + point.y
+          );
         }
         if (lastDispatchedIndex < trajectory.length - 1) requestAnimationFrame(playFrame);
         else resolve();
@@ -378,14 +494,13 @@
       requestAnimationFrame(playFrame);
     });
 
-    const finalPoint = trajectory.at(-1);
-    document.dispatchEvent(new MouseEvent('mouseup', {
-      bubbles: true,
-      cancelable: true,
-      clientX: startX + finalPoint.x,
-      clientY: startY + finalPoint.y,
-      buttons: 0
-    }));
+    const finalPoint = trajectory[trajectory.length - 1];
+    endSliderDrag(
+      inputMode,
+      slider,
+      startX + finalPoint.x,
+      startY + finalPoint.y
+    );
     const actualPlaybackDurationMs = performance.now() - playbackStartedAt;
 
     return {
@@ -396,6 +511,7 @@
       scaledPoints: trajectory,
       pointIntervalMs: sliderTrajectoryIntervalMs,
       scheduler: 'requestAnimationFrame-batched',
+      inputMode,
       maxPointsPerFrame: sliderTrajectoryMaxPointsPerFrame,
       requestedDurationMs,
       actualPlaybackDurationMs,
@@ -620,7 +736,11 @@
     if (!loginBtn) throw new Error('Login button not found');
 
     log('Credentials filled; submitting login...');
-    loginBtn.click();
+    if (typeof window.startLogin === 'function') {
+      window.startLogin(loginBtn);
+    } else {
+      loginBtn.click();
+    }
 
     const deadline = Date.now() + 6000;
     while (Date.now() < deadline) {

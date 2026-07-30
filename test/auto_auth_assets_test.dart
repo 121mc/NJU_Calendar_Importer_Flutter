@@ -16,12 +16,17 @@ void main() {
 
       expect(
         sha256.convert(utf8.encode(script)).toString(),
-        'a6d38352397386c5278c73188b55e4073fba3c47f982e90251667466e65f3b2a',
+        '556ac274ae40df926374796d5ced093191a19f1a2b24390a80d380a45673efd6',
       );
       expect(script, contains('solveSliderCaptcha(maxAttempts = 2)'));
       expect(script, contains('submitLoginAndSolveSlider(loginViewDiv)'));
-      expect(script.indexOf('loginBtn.click();'),
+      expect(script.indexOf("typeof window.startLogin === 'function'"),
           lessThan(script.indexOf('return solveSliderCaptcha();')));
+      expect(script, contains("return 'touch';"));
+      expect(script, contains("'touchmove',"));
+      expect(script, contains("'touchend',"));
+      expect(script, contains("return 'mouse';"));
+      expect(script, isNot(contains('.at(-1)')));
       expect(script, isNot(contains("action: 'solveCaptcha'")));
       expect(script, isNot(contains('captchaImg')));
       expect(script, isNot(contains('ONNX')));
