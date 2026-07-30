@@ -16,9 +16,15 @@ void main() {
 
       expect(
         sha256.convert(utf8.encode(script)).toString(),
-        'b735b0b3c4e965aad2fc148f1f68db6278ccee8c8f1a0156e962d44ca001ff6e',
+        'a6d38352397386c5278c73188b55e4073fba3c47f982e90251667466e65f3b2a',
       );
       expect(script, contains('solveSliderCaptcha(maxAttempts = 2)'));
+      expect(script, contains('submitLoginAndSolveSlider(loginViewDiv)'));
+      expect(script.indexOf('loginBtn.click();'),
+          lessThan(script.indexOf('return solveSliderCaptcha();')));
+      expect(script, isNot(contains("action: 'solveCaptcha'")));
+      expect(script, isNot(contains('captchaImg')));
+      expect(script, isNot(contains('ONNX')));
       expect(script, contains('NJU_INVALID_CREDENTIALS'));
       expect(script, contains('NJU_SLIDER_FAILED_TWICE'));
       expect(script, contains("document.addEventListener('submit'"));

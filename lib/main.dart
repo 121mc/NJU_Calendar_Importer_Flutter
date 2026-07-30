@@ -142,7 +142,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  static const _privacyAcceptedKey = 'privacy_policy_accepted_v3';
+  static const _privacyAcceptedKey = 'privacy_policy_accepted_20260730';
 
   late final StorageService _storageService;
   late final AuthService _authService;
@@ -172,6 +172,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _privacyReady = false;
   bool _privacyDialogShowing = false;
   bool _bootstrapDone = false;
+  bool _startupReloginAttempted = false;
   int _backgroundLoginAttempt = 0;
 
   AutoLoginSettings _autoLoginSettings = const AutoLoginSettings();
@@ -223,7 +224,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _showPrivacyConsentDialog();
     }
 
-    if (mounted) {
+    if (mounted && !_startupReloginAttempted) {
       await _loadAutoLoginSettings();
     }
   }
@@ -299,7 +300,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               content: const SingleChildScrollView(
                 child: Text(
                   '欢迎使用“呢喃课表导入”。\n\n'
-                  '新版隐私政策说明了自动登录、内嵌 WebView、本地字符与滑块验证码处理、登录态、课表和系统日历的数据处理方式。\n\n'
+                  '我们于2026年7月30日更新了隐私政策。\n\n'
                   '请阅读并同意新版《隐私政策》后继续使用。本应用不会将你的账号、验证码、课表内容或日历数据上传到开发者自建服务器。',
                 ),
               ),
@@ -367,17 +368,43 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _session = savedSession;
         _schoolType = savedSession.schoolType;
       });
-      await _prepareScheduleForSession();
+      final loaded = await _prepareScheduleForSession(showError: false);
+      if (!loaded) {
+        await _retryLoginAfterStartupFetchFailure();
+      }
     }
   }
 
-  Future<void> _prepareScheduleForSession() async {
+  Future<bool> _prepareScheduleForSession({bool showError = true}) async {
     final session = _session;
-    if (session == null) return;
+    if (session == null) return false;
 
     if (session.schoolType == SchoolType.undergrad) {
-      await _loadSemesterOptions();
+      return _loadSemesterOptions(showError: showError);
     }
+    return true;
+  }
+
+  Future<void> _retryLoginAfterStartupFetchFailure() async {
+    if (!mounted || _startupReloginAttempted || _loggingIn) return;
+    _startupReloginAttempted = true;
+
+    await _loadAutoLoginSettings();
+    if (!mounted) return;
+
+    if (!_autoLoginSettings.hasCredentials) {
+      _showSnackBar('自动拉取学期信息失败，请先配置登录信息。');
+      return;
+    }
+
+    final schoolType = SchoolType.fromStudentId(_autoLoginSettings.username);
+    if (schoolType == null) {
+      _showSnackBar('自动拉取学期信息失败，请检查保存的学号。');
+      return;
+    }
+
+    _showSnackBar('登录状态已失效，正在自动重新登录…');
+    await _startBackgroundLogin(schoolType);
   }
 
   Future<void> _checkCalendarPermissionOnLaunch({bool silent = false}) async {
@@ -457,6 +484,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
+    await _startBackgroundLogin(schoolType);
+  }
+
+  Future<void> _startBackgroundLogin(SchoolType schoolType) async {
     await _authService.clearSession();
     if (!mounted) return;
     setState(() {
@@ -595,9 +626,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _prepareScheduleForSession();
   }
 
-  Future<void> _loadSemesterOptions() async {
+  Future<bool> _loadSemesterOptions({bool showError = true}) async {
     final session = _session;
-    if (session == null || session.schoolType != SchoolType.undergrad) return;
+    if (session == null || session.schoolType != SchoolType.undergrad) {
+      return false;
+    }
 
     setState(() {
       _loadingSemesters = true;
@@ -610,7 +643,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       final options =
           await _scheduleService.fetchUndergradSemesterOptions(session);
-      if (!mounted) return;
+      if (!mounted) return false;
 
       final selectedSemester = options.currentSemester;
       setState(() {
@@ -624,12 +657,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           '已默认选择 ${selectedSemester.name}。',
         );
       }
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _semesterOptionsLoaded = true;
       });
-      _showSnackBar('加载学期列表失败：$e');
+      if (showError) {
+        _showSnackBar('加载学期列表失败：$e');
+      }
+      return false;
     } finally {
       if (mounted) {
         setState(() {

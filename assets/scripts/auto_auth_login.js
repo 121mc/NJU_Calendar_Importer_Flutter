@@ -32,30 +32,6 @@
   }
 
 
-  async function refreshCaptcha(loginViewDiv, captchaImg = null, timeoutMs = 2000) {
-    const image = captchaImg || loginViewDiv.querySelector('#captchaImg') ||
-                  document.querySelector('.login-main #captchaImg');
-    if (!image) return false;
-
-    const previousSrc = image.src;
-    const refreshBtn = loginViewDiv.querySelector('.captcha-refresh');
-    if (refreshBtn) {
-      refreshBtn.click();
-    } else {
-      image.src = '/authserver/getCaptcha.htl?' + Date.now();
-    }
-
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const hasNewImage = image.src && image.src.includes('getCaptcha') &&
-                          image.src !== previousSrc && image.complete &&
-                          image.naturalWidth > 0;
-      if (hasNewImage) return true;
-      await sleep(50);
-    }
-    return false;
-  }
-
   function getLoginErrorText() {
     const errorTip = document.querySelector('.login-main #showErrorTip');
     return errorTip ? errorTip.textContent.trim() : '';
@@ -80,16 +56,6 @@
     return style.display !== 'none' && style.visibility !== 'hidden' &&
            Number(style.opacity || 1) !== 0 && element.getClientRects().length > 0;
   }
-  function getVisibleImageCaptcha(loginViewDiv) {
-    const captchaDiv = loginViewDiv.querySelector('#captchaDiv');
-    const captchaInput = loginViewDiv.querySelector('.m-account #captcha') ||
-                         loginViewDiv.querySelector('#captcha');
-    const captchaImg = loginViewDiv.querySelector('#captchaImg');
-    return isElementVisible(captchaDiv) && isElementVisible(captchaInput) &&
-           isElementVisible(captchaImg) ? { captchaDiv, captchaInput, captchaImg } : null;
-  }
-
-
   function getSliderElements() {
     const root = document.querySelector('#sliderCaptchaDiv');
     if (!root || !isElementVisible(root)) return null;
@@ -649,11 +615,11 @@
     throw new Error('NJU_SLIDER_FAILED_TWICE');
   }
 
-  async function submitWithoutImageCaptcha(loginViewDiv) {
+  async function submitLoginAndSolveSlider(loginViewDiv) {
     const loginBtn = loginViewDiv.querySelector('#login_submit');
     if (!loginBtn) throw new Error('Login button not found');
 
-    log('No image captcha is visible; submitting login directly...');
+    log('Credentials filled; submitting login...');
     loginBtn.click();
 
     const deadline = Date.now() + 6000;
@@ -663,15 +629,13 @@
         log('Slider captcha appeared after submit; solving...');
         return solveSliderCaptcha();
       }
-      if (getVisibleImageCaptcha(loginViewDiv)) {
-        log('Image captcha appeared after submit; starting recognition...');
-        return false;
-      }
       const errorText = getLoginErrorText();
-      if (errorText) throw new Error(`Login failed: ${errorText}`);
+      if (errorText && !errorText.includes('验证码')) {
+        throw new Error('NJU_INVALID_CREDENTIALS');
+      }
       await sleep(100);
     }
-    throw new Error('Login did not respond after submission');
+    throw new Error('Slider captcha did not appear after login submission');
   }
 
   function waitForElement(selector, container, timeoutMs = 10000) {
@@ -795,185 +759,7 @@
     usernameField.dispatchEvent(new Event('focusout', { bubbles: true }));
     usernameField.dispatchEvent(new Event('blur', { bubbles: true }));
 
-    // Step 4: Check once and submit immediately when no image captcha is visible.
-    let visibleImageCaptcha = getVisibleImageCaptcha(loginViewDiv);
-    if (!visibleImageCaptcha) {
-      const submitted = await submitWithoutImageCaptcha(loginViewDiv);
-      if (submitted) {
-        log('Login completed without an image captcha.', 'success');
-        notifyLoginResult(true, '', isPageLogin);
-        return;
-      }
-      visibleImageCaptcha = getVisibleImageCaptcha(loginViewDiv);
-    }
-
-    log('Image captcha is visible; starting recognition...');
-
-
-    let isLoginComplete = false;
-    let attempt = 0;
-    const maxAttempts = 20;
-
-    while (!isLoginComplete && attempt < maxAttempts) {
-      attempt++;
-      if (attempt > 1) {
-        log(`开始第 ${attempt} 次尝试识别验证码...`);
-      }
-
-      // Check if we are still on the login page
-      if (!window.location.href.includes('authserver/login')) {
-        isLoginComplete = true;
-        break;
-      }
-
-      // Force show captcha if not visible
-      const captchaDiv = loginViewDiv.querySelector('#captchaDiv');
-      if (captchaDiv && captchaDiv.classList.contains('hide')) {
-        log('强制显示验证码区域...');
-        await refreshCaptcha(loginViewDiv);
-      }
-
-      // Step 6: Get captcha image
-      const captchaImg = loginViewDiv.querySelector('#captchaImg') ||
-                         document.querySelector('.login-main #captchaImg');
-      if (!captchaImg) {
-        throw new Error('找不到验证码图片元素');
-      }
-
-      // Wait for image to have a valid src
-      let retries = 0;
-      while ((!captchaImg.src || !captchaImg.src.includes('getCaptcha')) && retries < 25) {
-        await sleep(200);
-        retries++;
-      }
-
-      if (!captchaImg.src || !captchaImg.src.includes('getCaptcha')) {
-        // Manually trigger captcha load and continue as soon as the image updates.
-        log('手动触发验证码加载...');
-        await refreshCaptcha(loginViewDiv, captchaImg);
-      }
-
-      log(`验证码图片URL: ${captchaImg.src}`);
-
-      // Step 7: Fetch captcha image data
-      let captchaImageData;
-      try {
-        const captchaResponse = await fetch(captchaImg.src, { credentials: 'include' });
-        const captchaBlob = await captchaResponse.blob();
-        captchaImageData = await blobToBase64(captchaBlob);
-      } catch (e) {
-        // Fallback: draw to canvas
-        log('通过 canvas 获取验证码图片...');
-        captchaImageData = await getImageFromCanvas(captchaImg);
-      }
-
-      if (!captchaImageData) {
-        throw new Error('无法获取验证码图片数据');
-      }
-
-      // Step 8: Send to background for ONNX recognition
-      log('正在识别验证码...');
-      let captchaResult = '';
-      try {
-        captchaResult = await new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage(
-            {
-              action: 'solveCaptcha',
-              imageData: captchaImageData,
-              debugContext: {
-                attempt,
-                pageUrl: window.location.href,
-                imageUrl: captchaImg.currentSrc || captchaImg.src
-              }
-            },
-            (response) => {
-              if (chrome.runtime.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-                return;
-              }
-              if (response && response.error) {
-                reject(new Error(response.error));
-                return;
-              }
-              resolve(response.result);
-            }
-          );
-        });
-      } catch (err) {
-        log(`验证码识别请求失败: ${err.message}`, 'error');
-      }
-
-      if (!captchaResult || captchaResult.length === 0) {
-        log('验证码识别结果为空，准备重试...', 'warn');
-        await refreshCaptcha(loginViewDiv, captchaImg);
-        continue;
-      }
-
-      log(`验证码识别结果: ${captchaResult}`);
-
-      // Step 9: Fill captcha
-      const captchaInput = loginViewDiv.querySelector('.m-account #captcha') ||
-                           loginViewDiv.querySelector('#captcha');
-      if (!captchaInput) {
-        throw new Error('找不到验证码输入框');
-      }
-      setNativeValue(captchaInput, captchaResult);
-      captchaInput.dispatchEvent(new Event('input', { bubbles: true }));
-      captchaInput.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(50);
-
-      // Restore password if it was disabled in previous attempt
-      const passwordField = loginViewDiv.querySelector('.m-account #password') ||
-                            loginViewDiv.querySelector('#password');
-      if (passwordField && passwordField.hasAttribute('disabled')) {
-        passwordField.removeAttribute('disabled');
-        setNativeValue(passwordField, password);
-        passwordField.dispatchEvent(new Event('input', { bubbles: true }));
-        passwordField.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-
-      // Step 10: Submit the form via page's own functions
-      log('提交登录表单...');
-
-      const loginBtn = loginViewDiv.querySelector('#login_submit');
-      if (loginBtn) {
-        loginBtn.click();
-      } else {
-        throw new Error('找不到登录按钮');
-      }
-
-      // Step 11: Continue as soon as the page redirects or reports an error.
-      log('等待登录结果...');
-      const outcome = await waitForLoginOutcome();
-
-      if (outcome.success) {
-        isLoginComplete = true;
-        break;
-      }
-
-      if (outcome.errorText) {
-        if (outcome.errorText.includes('验证码')) {
-          log(`提示: ${outcome.errorText}，立即重试...`, 'warn');
-          await refreshCaptcha(loginViewDiv, captchaImg);
-          if (passwordField) {
-            passwordField.removeAttribute('disabled');
-            setNativeValue(passwordField, password);
-            passwordField.dispatchEvent(new Event('input', { bubbles: true }));
-            passwordField.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-        } else {
-          throw new Error(`登录失败: ${outcome.errorText}`);
-        }
-      } else {
-        log('长时间无响应，准备重试...');
-      }
-    }
-
-    if (!isLoginComplete) {
-      throw new Error('多次尝试验证码后登录仍未成功');
-    }
-
-    // Login successful (redirected away from login page)
+    await submitLoginAndSolveSlider(loginViewDiv);
     log('登录成功！', 'success');
     notifyLoginResult(true, '', isPageLogin);
   }
@@ -988,37 +774,6 @@
     ).set;
     nativeInputValueSetter.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  function getImageFromCanvas(imgElement) {
-    return new Promise((resolve, reject) => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        // Ensure we capture at the exact intrinsic resolution, handling 80x30 properly
-        const w = img.naturalWidth || img.width || 80;
-        const h = img.naturalHeight || img.height || 30;
-        canvas.width = w;
-        canvas.height = h;
-        
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/png'));
-      };
-      img.onerror = reject;
-      img.src = imgElement.src;
-    });
   }
 
   function notifyLoginResult(success, message = '', userInitiated = false) {

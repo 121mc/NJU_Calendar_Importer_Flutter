@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:webview_flutter/webview_flutter.dart';
@@ -9,7 +8,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../models/login_models.dart';
 import '../models/school_type.dart';
 import '../services/auth_service.dart';
-import '../services/ocr_solver_service.dart';
 
 enum AutomaticLoginFailureType {
   network,
@@ -52,9 +50,9 @@ class WebLoginPage extends StatefulWidget {
   /// Keeps the official page active behind a progress overlay during login.
   final bool backgroundLogin;
 
-  /// Runs the full captcha-solving and form-submission automation.
+  /// Fills credentials, submits the form, and solves a slider challenge.
   ///
-  /// When false, credentials are filled but captcha handling and submission
+  /// When false, credentials are filled but slider handling and submission
   /// are left entirely to the user.
   final bool automaticLogin;
 
@@ -84,7 +82,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
   bool _done = false;
   bool _autoFillDone = false;
   bool _autoFilling = false;
-  bool _captchaSolving = false;
   bool _failureReported = false;
   late bool _showWebContent;
 
@@ -524,9 +521,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
           );
           await _replyToBridge(id, const <String, dynamic>{});
           break;
-        case 'solveCaptcha':
-          await _solveCaptchaForBridge(id, message);
-          break;
         case 'loginComplete':
           _handleLoginCompleteMessage(message);
           await _replyToBridge(id, const <String, dynamic>{});
@@ -570,34 +564,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
       _status = message;
       if (level == 'error') _showWebContent = true;
     });
-  }
-
-  Future<void> _solveCaptchaForBridge(
-    dynamic id,
-    Map<String, dynamic> message,
-  ) async {
-    final imageData = message['imageData']?.toString() ?? '';
-    final commaIndex = imageData.indexOf(',');
-    final base64Payload =
-        commaIndex >= 0 ? imageData.substring(commaIndex + 1) : imageData;
-    if (base64Payload.isEmpty) {
-      throw const FormatException('验证码图片为空');
-    }
-
-    if (mounted) {
-      setState(() {
-        _captchaSolving = true;
-        _status = '检测到字符验证码，正在使用内置 OCR 识别…';
-      });
-    }
-
-    try {
-      final Uint8List bytes = base64Decode(base64Payload);
-      final result = await OcrSolverService.solve(bytes);
-      await _replyToBridge(id, <String, dynamic>{'result': result});
-    } finally {
-      if (mounted) setState(() => _captchaSolving = false);
-    }
   }
 
   void _handleLoginCompleteMessage(Map<String, dynamic> message) {
@@ -758,13 +724,6 @@ class _WebLoginPageState extends State<WebLoginPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-              trailing: _captchaSolving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : null,
             ),
           ),
           Expanded(

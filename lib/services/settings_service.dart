@@ -65,7 +65,7 @@ class SettingsService {
       try {
         await _storage.delete(key: key);
       } catch (_) {
-        // A storage failure should not prevent local OCR login from working.
+        // A storage failure should not prevent automatic login from working.
       }
     }
   }

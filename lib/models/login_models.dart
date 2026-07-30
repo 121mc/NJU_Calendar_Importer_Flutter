@@ -1,23 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:cookie_jar/cookie_jar.dart';
-import 'package:dio/dio.dart';
 
 import 'school_type.dart';
-
-class LoginPreparation {
-  LoginPreparation({
-    required this.dio,
-    required this.cookieJar,
-    required this.hiddenFields,
-    required this.captchaBytes,
-  });
-
-  final Dio dio;
-  final CookieJar cookieJar;
-  final Map<String, String> hiddenFields;
-  final Uint8List captchaBytes;
-}
 
 class StoredCookie {
   const StoredCookie({
