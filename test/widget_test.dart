@@ -1009,6 +1009,20 @@ void main() {
     expect(find.text('拉取学期信息'), findsOneWidget);
     expect(find.byType(WebLoginPage), findsOneWidget);
     expect(backgroundPage.embedded, isTrue);
+    expect(
+      find.ancestor(
+        of: find.byType(WebLoginPage),
+        matching: find.byType(ExcludeSemantics),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.byType(WebLoginPage),
+        matching: find.byType(Opacity),
+      ),
+      findsNothing,
+    );
 
     backgroundPage.onAutomaticLoginFailure!.call(
       const AutomaticLoginFailure(

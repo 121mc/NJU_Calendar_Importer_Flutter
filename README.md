@@ -2,7 +2,7 @@
 
 一个使用 Flutter 开发的南京大学课表导入工具。应用通过南京大学官方统一身份认证获取课程和考试安排，并将所选学期日程写入手机系统日历。
 
-当前版本：`1.6.0
+当前版本：`1.6.1`
 - Android：[下载地址](https://box.nju.edu.cn/d/adf190c64ece4373bf43/)
 - iOS：在 App Store 搜索“呢喃课表导入”
 - HarmonyOS：[NJU_Calendar_Importer_ArkTS](https://github.com/121mc/NJU_Calendar_Importer_ArkTS)

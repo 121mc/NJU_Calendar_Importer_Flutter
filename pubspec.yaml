@@ -2,7 +2,7 @@ name: nju_calendar_importer_flutter
 
 description: Flutter app for importing University schedules into the device calendar.
 publish_to: 'none'
-version: 1.6.0+20260730
+version: 1.6.1+20260807
 environment:
   sdk: '>=3.4.0 <4.0.0'
 

@@ -898,33 +898,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: !_privacyReady
-                ? const Center(child: CircularProgressIndicator())
-                : !_privacyAccepted
-                    ? _buildPrivacyBlockedView()
-                    : SafeArea(
-                        child: ListView(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                          children: [
-                            _buildControlCard(),
-                            if (_session != null) ...[
-                              const SizedBox(height: 12),
-                              _buildSemesterCard(),
-                            ],
-                            if (_bundle != null) ...[
-                              const SizedBox(height: 12),
-                              _buildCalendarCard(),
-                            ],
-                          ],
-                        ),
-                      ),
-          ),
           if (_loggingIn && _privacyAccepted)
             Positioned.fill(
               child: IgnorePointer(
-                child: Opacity(
-                  opacity: 0,
+                child: ExcludeSemantics(
+                  // Keep WKWebView fully rendered behind the opaque app UI.
+                  // Making its native view transparent pauses both animation
+                  // frames and timers on iOS, which can strand auto login.
                   child: WebLoginPage(
                     key: ValueKey(backgroundLoginAttempt),
                     schoolType: _schoolType,
@@ -946,6 +926,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          Positioned.fill(
+            child: ColoredBox(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              child: !_privacyReady
+                  ? const Center(child: CircularProgressIndicator())
+                  : !_privacyAccepted
+                      ? _buildPrivacyBlockedView()
+                      : SafeArea(
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            children: [
+                              _buildControlCard(),
+                              if (_session != null) ...[
+                                const SizedBox(height: 12),
+                                _buildSemesterCard(),
+                              ],
+                              if (_bundle != null) ...[
+                                const SizedBox(height: 12),
+                                _buildCalendarCard(),
+                              ],
+                            ],
+                          ),
+                        ),
+            ),
+          ),
         ],
       ),
     );

@@ -74,6 +74,8 @@ class _WebLoginPageState extends State<WebLoginPage> {
   static const _bridgeName = 'NjuAutoLoginBridge';
   static const _automationAsset = 'assets/scripts/auto_auth_login.js';
   static const _trajectoryAsset = 'assets/recordings/3.json';
+  static const _automaticLoginStallTimeout = Duration(seconds: 12);
+  static const _maxAutomaticLoginInjections = 2;
 
   late final WebViewController _controller;
 
@@ -92,7 +94,9 @@ class _WebLoginPageState extends State<WebLoginPage> {
   String? _automationSource;
   String? _trajectoryDataUrl;
   Timer? _automaticLoginTimeout;
+  Timer? _automaticLoginStallTimer;
   Timer? _pageLoadTimeout;
+  int _automaticLoginInjectionCount = 0;
 
   String get _loginEntryUrl {
     final service = Uri.encodeComponent(widget.schoolType.appShowUrl);
@@ -167,6 +171,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
                 _autoFillDone = false;
                 _autoFilling = false;
               } else if (_isTargetArea(url)) {
+                _automaticLoginStallTimer?.cancel();
                 _status = '已进入目标系统，正在读取登录状态…';
               } else {
                 _status = '页面跳转中…';
@@ -223,7 +228,9 @@ class _WebLoginPageState extends State<WebLoginPage> {
   }
 
   Future<void> _injectAutoLogin() async {
-    if (_autoFillDone || _autoFilling || _done) return;
+    if (_autoFillDone || _autoFilling || _done || _failureReported) {
+      return;
+    }
     if (!widget.hasCredentials) {
       if (mounted) {
         setState(() {
@@ -247,6 +254,16 @@ class _WebLoginPageState extends State<WebLoginPage> {
         const AutomaticLoginFailure(
           AutomaticLoginFailureType.other,
           '自动登录资源不可用',
+        ),
+      );
+      return;
+    }
+
+    if (_automaticLoginInjectionCount >= _maxAutomaticLoginInjections) {
+      _reportAutomaticLoginFailure(
+        const AutomaticLoginFailure(
+          AutomaticLoginFailureType.other,
+          '统一认证页面在提交后重置，自动重试仍未恢复',
         ),
       );
       return;
@@ -289,12 +306,14 @@ class _WebLoginPageState extends State<WebLoginPage> {
     }
 
     _autoFilling = true;
+    _automaticLoginInjectionCount += 1;
     if (mounted) setState(() => _status = '正在启动完整自动登录流程…');
 
     try {
       final bootstrap = _buildChromeCompatibilityLayer(trajectoryDataUrl);
       await _controller.runJavaScript('$bootstrap\n$automationSource');
       _autoFillDone = true;
+      _armAutomaticLoginStallTimer();
     } catch (error) {
       debugPrint('[WebLoginPage] Failed to inject automation: $error');
       if (mounted) {
@@ -560,6 +579,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   void _handleAutomationLog(String message, String level) {
     debugPrint('[NJU Auto Auth][$level] $message');
     if (!mounted || message.isEmpty) return;
+    _armAutomaticLoginStallTimer();
     setState(() {
       _status = message;
       if (level == 'error') _showWebContent = true;
@@ -609,8 +629,27 @@ class _WebLoginPageState extends State<WebLoginPage> {
     if (_failureReported || !widget.automaticLogin) return;
     _failureReported = true;
     _automaticLoginTimeout?.cancel();
+    _automaticLoginStallTimer?.cancel();
     _pageLoadTimeout?.cancel();
     widget.onAutomaticLoginFailure?.call(failure);
+  }
+
+  void _armAutomaticLoginStallTimer() {
+    if (!widget.automaticLogin || _failureReported || _done || !mounted) {
+      return;
+    }
+    _automaticLoginStallTimer?.cancel();
+    _automaticLoginStallTimer = Timer(_automaticLoginStallTimeout, () {
+      if (!mounted || _done || _failureReported || !_isAuthPage(_currentUrl)) {
+        return;
+      }
+      debugPrint(
+        '[WebLoginPage] Automatic login stalled on the auth page; retrying injection.',
+      );
+      _autoFillDone = false;
+      _autoFilling = false;
+      unawaited(_injectAutoLogin());
+    });
   }
 
   Future<void> _replyToBridge(
@@ -669,6 +708,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
 
   void _finishWithSession(SessionInfo session) {
     _automaticLoginTimeout?.cancel();
+    _automaticLoginStallTimer?.cancel();
     _pageLoadTimeout?.cancel();
     final callback = widget.onSession;
     if (callback != null) {
@@ -681,6 +721,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   @override
   void dispose() {
     _automaticLoginTimeout?.cancel();
+    _automaticLoginStallTimer?.cancel();
     _pageLoadTimeout?.cancel();
     super.dispose();
   }
