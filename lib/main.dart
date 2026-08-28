@@ -12,6 +12,7 @@ import 'privacy_policy.dart';
 import 'pages/web_login_page.dart';
 import 'services/auth_service.dart';
 import 'services/calendar_sync_service.dart';
+import 'services/ics_export_service.dart';
 import 'services/nju_schedule_service.dart';
 import 'services/settings_service.dart';
 import 'services/storage_service.dart';
@@ -148,6 +149,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final AuthService _authService;
   late final NjuScheduleService _scheduleService;
   late final CalendarSyncService _calendarSyncService;
+  late final IcsExportService _icsExportService;
   late final SettingsService _settingsService;
 
   SessionInfo? _session;
@@ -167,6 +169,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _loadingCalendars = false;
   bool _syncingCalendar = false;
   bool _deletingCurrentSemesterEvents = false;
+  bool _exportingIcs = false;
   bool _permissionCheckRunning = false;
   bool _privacyAccepted = false;
   bool _privacyReady = false;
@@ -188,6 +191,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _scheduleService =
         widget.scheduleService ?? NjuScheduleService(_authService);
     _calendarSyncService = widget.calendarSyncService ?? CalendarSyncService();
+    _icsExportService = IcsExportService();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeApp();
@@ -882,6 +886,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     showAppSnackBar(context, message);
   }
 
+  Future<void> _exportIcs() async {
+    final bundle = _bundle;
+    if (bundle == null) {
+      _showSnackBar('课表还在自动获取中，请稍后再导出。');
+      return;
+    }
+
+    setState(() {
+      _exportingIcs = true;
+    });
+    try {
+      await _icsExportService.exportAndShare(bundle);
+      if (!mounted) return;
+      _showSnackBar('已导出 ${bundle.events.length} 条事件至 .ics 文件。');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('导出 .ics 文件失败：$e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _exportingIcs = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final backgroundLoginAttempt = _backgroundLoginAttempt;
@@ -1077,7 +1107,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (isUndergrad && hasSemesterOptions) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<NjuSemester>(
-                initialValue: _selectedSemester,
+                value: _selectedSemester,
                 isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: '选择要导入的学期',
@@ -1163,7 +1193,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              initialValue: _selectedCalendarId,
+              value: _selectedCalendarId,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: '选择写入目标日历',
@@ -1203,7 +1233,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed:
-                        _syncingCalendar || _deletingCurrentSemesterEvents
+                        _syncingCalendar || _deletingCurrentSemesterEvents || _exportingIcs
                             ? null
                             : _syncToCalendar,
                     icon: _syncingCalendar
@@ -1223,8 +1253,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
+                    onPressed: _exportingIcs ||
+                            _syncingCalendar ||
+                            _deletingCurrentSemesterEvents
+                        ? null
+                        : _exportIcs,
+                    icon: _exportingIcs
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.file_download_outlined),
+                    label: const Text('导出 .ics 文件'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
                     onPressed:
-                        _syncingCalendar || _deletingCurrentSemesterEvents
+                        _syncingCalendar || _deletingCurrentSemesterEvents || _exportingIcs
                             ? null
                             : _deleteCurrentSemesterImportedEvents,
                     icon: _deletingCurrentSemesterEvents
