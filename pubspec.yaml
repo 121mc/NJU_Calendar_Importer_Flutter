@@ -20,6 +20,8 @@ dependencies:
   shared_preferences: ^2.5.3
   webview_cookie_manager_flutter: 3.0.1
   webview_flutter: ^4.13.1
+  share_plus: ^10.0.0
+  path_provider: ^2.1.0
 
 dev_dependencies:
   flutter_test:
