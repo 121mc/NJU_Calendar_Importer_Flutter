@@ -84,19 +84,38 @@
 - `device_calendar_plus`
 - `shared_preferences`
 
+## 开发环境
+
+本项目使用 [FVM](https://fvm.app/) 管理 Flutter SDK，版本由仓库根目录的 `.fvmrc` 固定：
+
+- Flutter：`3.47.2`（stable）
+- Dart：`3.13.2`（随上述 Flutter SDK 提供）
+
+克隆项目并安装 FVM 后，在项目根目录执行：
+
+```bash
+fvm install
+fvm flutter --version
+fvm flutter pub get
+```
+
+`.fvmrc` 需要纳入版本控制；`.fvm/` 是本机生成的 SDK 链接和缓存目录，不应提交。
+
+VS Code 通常会由 FVM 自动配置项目 SDK。Android Studio 用户需要在 Flutter SDK 设置中选择项目下的 `.fvm/flutter_sdk`。若 IDE 已经打开项目，请在切换 SDK 后重新加载窗口或重启 IDE。
+
 ## 开发与验证
 
 ```bash
-flutter pub get
-flutter analyze
-flutter test
-flutter run
+fvm flutter pub get
+fvm flutter analyze
+fvm flutter test
+fvm flutter run
 ```
 
 构建 Android Debug APK：
 
 ```bash
-flutter build apk --debug
+fvm flutter build apk --debug
 ```
 
 ## 免责声明
