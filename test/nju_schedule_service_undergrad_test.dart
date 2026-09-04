@@ -21,13 +21,13 @@ class FakeAuthService extends AuthService {
 
 void main() {
   SessionInfo undergradSession() => const SessionInfo(
-        username: 'student',
+        username: '251250001',
         schoolType: SchoolType.undergrad,
         cookiesByBaseUrl: {},
       );
 
   SessionInfo graduateSession() => const SessionInfo(
-        username: 'student',
+        username: '123456789012',
         schoolType: SchoolType.graduate,
         cookiesByBaseUrl: {},
       );
@@ -319,8 +319,10 @@ void main() {
                             'SKXQ': 1,
                             'SKZC': '1',
                             'KCM': '数据结构',
+                            'KCH': 'CS101',
+                            'XF': '3',
                             'JASMC': '仙林教学楼101',
-                            'JSHS': '张三 13812345678',
+                            'JSHS': '张三,李四 13812345678',
                             'JXBMC': '数据结构-001',
                             'SKBJ': '计科一班',
                             'XXXQDM_DISPLAY': '仙林校区',
@@ -347,8 +349,11 @@ void main() {
                             'KSKSSJ': '09:00',
                             'KSJSSJ': '11:00',
                             'KCM': '数据结构',
+                            'KCH': 'CS101',
+                            'XF': '3',
                             'JASMC': '逸夫楼201',
                             'ZJJSXM': '李四',
+                            'XQDM_DISPLAY': '鼓楼校区',
                           },
                         ],
                       },
@@ -378,9 +383,18 @@ void main() {
     expect(course.description, contains(CalendarImportMetadata.currentMarker));
     expect(course.description, contains('semester_id=2025-2026-1'));
     expect(course.description, contains('import_key='));
-    expect(course.description, contains('学校：本科生'));
-    expect(course.description, contains('教师：张三'));
-    expect(course.description, contains('上课班级：计科一班'));
+    expect(
+      course.description,
+      startsWith(
+        '251250001的课程\n'
+        '课程：CS101，3学分\n'
+        '教师：张三,\n'
+        '李四\n'
+        '班级：数据结构-001\n'
+        '上课班级：计科一班\n\n',
+      ),
+    );
+    expect(course.location, '南大仙林 仙林教学楼101');
 
     final exam = bundle.events.firstWhere(
       (event) => event.title == '数据结构期末考试',
@@ -388,9 +402,11 @@ void main() {
     expect(exam.description, contains(CalendarImportMetadata.currentMarker));
     expect(exam.description, contains('semester_id=2025-2026-1'));
     expect(exam.description, contains('import_key='));
-    expect(exam.description, contains('学校：本科生'));
+    expect(exam.description, startsWith('251250001的课程\n课程：CS101，3学分\n'));
     expect(exam.description, contains('教师：李四'));
+    expect(exam.description, contains('班级：\n上课班级：'));
     expect(exam.description, contains('类型：期末考试'));
+    expect(exam.location, '南大鼓楼 逸夫楼201');
   });
 
   test('graduate generated descriptions use importer metadata', () async {
@@ -435,6 +451,7 @@ void main() {
                             'JSJCDM': 2,
                             'JASMC': '仙林教学楼201',
                             'KCDM': 'GRAD101',
+                            'XF': '2.5',
                             'KSSJ': 800,
                             'JSSJ': 950,
                             'ZCBH': '1',
@@ -488,10 +505,11 @@ void main() {
     expect(description, contains(CalendarImportMetadata.currentMarker));
     expect(description, contains('semester_id=2020-2021-1'));
     expect(description, contains('import_key='));
-    expect(description, contains('学校：研究生'));
+    expect(description, startsWith('123456789012的课程\n课程：GRAD101，2.5学分\n'));
     expect(description, contains('教师：王五'));
     expect(description, contains('班级：高级算法班'));
-    expect(description, contains('校区：鼓楼校区'));
+    expect(description, contains('上课班级：'));
     expect(description, contains('选课备注：请带教材'));
+    expect(bundle.events.single.location, '南大鼓楼 仙林教学楼201');
   });
 }

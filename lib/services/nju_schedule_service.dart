@@ -53,9 +53,13 @@ class NjuScheduleService {
     final dio = await _authService.buildAuthenticatedDio(session);
     switch (session.schoolType) {
       case SchoolType.undergrad:
-        return _fetchUndergrad(dio, includeFinalExams: includeFinalExams);
+        return _fetchUndergrad(
+          dio,
+          studentId: session.username,
+          includeFinalExams: includeFinalExams,
+        );
       case SchoolType.graduate:
-        return _fetchGraduate(dio);
+        return _fetchGraduate(dio, studentId: session.username);
     }
   }
 
@@ -95,12 +99,14 @@ class NjuScheduleService {
       semesterName: semesterName,
       semesterStart: semesterStart,
       semesterEnd: semesterEnd,
+      studentId: session.username,
       includeFinalExams: includeFinalExams,
     );
   }
 
   Future<ScheduleBundle> _fetchUndergrad(
     Dio dio, {
+    required String studentId,
     required bool includeFinalExams,
   }) async {
     final current = await _fetchUndergradCurrentSemester(dio);
@@ -120,6 +126,7 @@ class NjuScheduleService {
       semesterName: current.$2,
       semesterStart: semester.start,
       semesterEnd: semester.end,
+      studentId: studentId,
       includeFinalExams: includeFinalExams,
     );
   }
@@ -185,6 +192,7 @@ class NjuScheduleService {
     required String semesterName,
     required DateTime semesterStart,
     required DateTime semesterEnd,
+    required String studentId,
     required bool includeFinalExams,
   }) async {
     final coursesResp = await dio.post<dynamic>(
@@ -207,7 +215,9 @@ class NjuScheduleService {
 
     final events = <NjuCourseEvent>[];
     for (final row in courseRows) {
-      events.addAll(_mapUndergradCourse(row, semesterStart, semesterId));
+      events.addAll(
+        _mapUndergradCourse(row, semesterStart, semesterId, studentId),
+      );
     }
 
     var examCount = 0;
@@ -232,7 +242,7 @@ class NjuScheduleService {
       );
       examCount = examRows.length;
       for (final row in examRows) {
-        final event = _mapUndergradExam(row, semesterId);
+        final event = _mapUndergradExam(row, semesterId, studentId);
         if (event != null) {
           events.add(event);
         }
@@ -252,7 +262,10 @@ class NjuScheduleService {
     );
   }
 
-  Future<ScheduleBundle> _fetchGraduate(Dio dio) async {
+  Future<ScheduleBundle> _fetchGraduate(
+    Dio dio, {
+    required String studentId,
+  }) async {
     final semesterResp = await dio.post<dynamic>(
       'https://ehallapp.nju.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/kfdxnxqcx.do',
     );
@@ -327,6 +340,7 @@ class NjuScheduleService {
           semesterStart,
           courseIdToCampus['${row['KCDM']}'],
           semesterId,
+          studentId,
         ),
       );
     }
@@ -438,6 +452,7 @@ class NjuScheduleService {
     Map<String, dynamic> row,
     DateTime semesterStart,
     String semesterId,
+    String studentId,
   ) {
     final ksjc = _toInt(row['KSJC']);
     final jsjc = _toInt(row['JSJC']);
@@ -481,11 +496,14 @@ class NjuScheduleService {
     final weekday = _toInt(row['SKXQ']);
     final weekBitmap = '${row['SKZC'] ?? ''}';
     final title = '${row['KCM'] ?? '未命名课程'}';
-    final location = _stringOrNull(row['JASMC']);
+    final classroom = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['JSHS']) ?? _stringOrNull(row['SKJS']);
     final className = _stringOrNull(row['JXBMC']);
     final studentClasses = _stringOrNull(row['SKBJ']);
     final campus = _stringOrNull(row['XXXQDM_DISPLAY']);
+    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
+    final credits = _stringOrNull(row['XF']);
+    final location = _buildLocation(campus, classroom);
 
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
@@ -515,14 +533,13 @@ class NjuScheduleService {
       final description = _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        schoolLabel: '本科生',
+        studentId: studentId,
+        courseCode: courseCode,
+        credits: credits,
         teacher: teacher,
         className: className,
-        campus: campus,
-        extraLines: [
-          if (studentClasses != null && studentClasses.isNotEmpty)
-            '上课班级：$studentClasses',
-        ],
+        studentClasses: studentClasses,
+        extraLines: const [],
       );
       events.add(
         NjuCourseEvent(
@@ -539,7 +556,10 @@ class NjuScheduleService {
   }
 
   NjuCourseEvent? _mapUndergradExam(
-      Map<String, dynamic> row, String semesterId) {
+    Map<String, dynamic> row,
+    String semesterId,
+    String studentId,
+  ) {
     final dateText = _stringOrNull(row['KSRQ']);
     final startText = _stringOrNull(row['KSKSSJ']);
     final endText = _stringOrNull(row['KSJSSJ']);
@@ -567,8 +587,12 @@ class NjuScheduleService {
     );
 
     final title = '${row['KCM'] ?? '未命名课程'}期末考试';
-    final location = _stringOrNull(row['JASMC']);
+    final campus = _stringOrNull(row['XXXQDM_DISPLAY']) ??
+        _stringOrNull(row['XQDM_DISPLAY']);
+    final location = _buildLocation(campus, _stringOrNull(row['JASMC']));
     final teacher = _stringOrNull(row['ZJJSXM']);
+    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
+    final credits = _stringOrNull(row['XF']);
     final importKey =
         _buildImportKey('undergrad_exam', title, start, end, location);
 
@@ -581,10 +605,12 @@ class NjuScheduleService {
       description: _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        schoolLabel: '本科生',
+        studentId: studentId,
+        courseCode: courseCode,
+        credits: credits,
         teacher: teacher,
         className: null,
-        campus: null,
+        studentClasses: null,
         extraLines: const ['类型：期末考试'],
       ),
     );
@@ -595,6 +621,7 @@ class NjuScheduleService {
     DateTime semesterStart,
     String? campus,
     String semesterId,
+    String studentId,
   ) {
     final startTime = _hhmmToHourMinute(_toInt(row['KSSJ']));
     final endTime = _hhmmToHourMinute(_toInt(row['JSSJ']));
@@ -604,6 +631,9 @@ class NjuScheduleService {
     final location = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['JSXM']);
     final remark = _stringOrNull(row['XKBZ']);
+    final courseCode = _stringOrNull(row['KCDM']);
+    final credits = _stringOrNull(row['XF']);
+    final eventLocation = _buildLocation(campus, location);
 
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
@@ -628,15 +658,17 @@ class NjuScheduleService {
         title,
         start,
         end,
-        location,
+        eventLocation,
       );
       final description = _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        schoolLabel: '研究生',
+        studentId: studentId,
+        courseCode: courseCode,
+        credits: credits,
         teacher: teacher,
         className: _stringOrNull(row['BJMC']),
-        campus: campus,
+        studentClasses: _stringOrNull(row['SKBJ']),
         extraLines: [
           if (remark != null && remark.isNotEmpty) '选课备注：$remark',
         ],
@@ -646,7 +678,7 @@ class NjuScheduleService {
           title: title,
           start: start,
           end: end,
-          location: '$campus $location',
+          location: eventLocation,
           description: description,
           importKey: importKey,
         ),
@@ -678,22 +710,51 @@ class NjuScheduleService {
     return text;
   }
 
+  String? _formatTeacher(String? teacher) {
+    final sanitized = _sanitizeTeacher(teacher);
+    if (sanitized == null) return null;
+    return sanitized.replaceAllMapped(
+      RegExp(r'([,，])\s*'),
+      (match) => '${match.group(1)}\n',
+    );
+  }
+
+  String? _buildLocation(String? campus, String? location) {
+    final normalizedCampus = _stringOrNull(campus);
+    final normalizedLocation = _stringOrNull(location);
+    final campusPrefix = normalizedCampus == null
+        ? null
+        : '南大${String.fromCharCodes(normalizedCampus.runes.take(2))}';
+    final result = [campusPrefix, normalizedLocation]
+        .whereType<String>()
+        .where((part) => part.isNotEmpty)
+        .join(' ')
+        .trim();
+    return result.isEmpty ? null : result;
+  }
+
   String _buildDescription({
     required String semesterId,
     required String importKey,
-    required String schoolLabel,
+    required String studentId,
+    required String? courseCode,
+    required String? credits,
     required String? teacher,
     required String? className,
-    required String? campus,
+    required String? studentClasses,
     required List<String> extraLines,
   }) {
-    final sanitizedTeacher = _sanitizeTeacher(teacher);
+    final formattedTeacher = _formatTeacher(teacher);
+    final courseParts = [
+      if (courseCode != null && courseCode.isNotEmpty) courseCode,
+      if (credits != null && credits.isNotEmpty) '$credits学分',
+    ];
     final detailLines = [
-      '学校：$schoolLabel',
-      if (sanitizedTeacher != null && sanitizedTeacher.isNotEmpty)
-        '教师：$sanitizedTeacher',
-      if (className != null && className.isNotEmpty) '班级：$className',
-      if (campus != null && campus.isNotEmpty) '校区：$campus',
+      '$studentId的课程',
+      '课程：${courseParts.join('，')}',
+      '教师：${formattedTeacher ?? ''}',
+      '班级：${className ?? ''}',
+      '上课班级：${studentClasses ?? ''}',
       ...extraLines,
     ];
 

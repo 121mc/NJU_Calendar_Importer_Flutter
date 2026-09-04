@@ -18,11 +18,14 @@ class CalendarImportMetadata {
     required String importKey,
     required Iterable<String> detailLines,
   }) {
+    final details =
+        detailLines.where((line) => line.trim().isNotEmpty).toList();
     return [
+      ...details,
+      if (details.isNotEmpty) '',
       currentMarker,
       'semester_id=$semesterId',
       'import_key=$importKey',
-      ...detailLines.where((line) => line.trim().isNotEmpty),
     ].join('\n');
   }
 
