@@ -169,6 +169,20 @@ void main() {
               );
               return;
             }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {'rows': <Map<String, dynamic>>[]},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
             if (options.path.endsWith('/cxxsksap.do')) {
               handler.resolve(
                 Response(
@@ -251,6 +265,20 @@ void main() {
               );
               return;
             }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {'rows': <Map<String, dynamic>>[]},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
             if (options.path.endsWith('/cxxsksap.do')) {
               handler.resolve(
                 Response(
@@ -291,6 +319,11 @@ void main() {
     );
     expect(courseRequest.data['XNXQDM'], '2025-2026-1');
 
+    final courseListRequest = requests.firstWhere(
+      (request) => request.path.endsWith('/cxxskclb.do'),
+    );
+    expect(courseListRequest.data['XNXQDM'], '2025-2026-1');
+
     final examRequest = requests.firstWhere(
       (request) => request.path.endsWith('/cxxsksap.do'),
     );
@@ -329,6 +362,20 @@ void main() {
                           },
                         ],
                       },
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {'rows': <Map<String, dynamic>>[]},
                     },
                     'code': '0',
                   },
@@ -394,7 +441,7 @@ void main() {
         '上课班级：计科一班\n\n',
       ),
     );
-    expect(course.location, '南大仙林 仙林教学楼101');
+    expect(course.location, '仙林教学楼101');
 
     final exam = bundle.events.firstWhere(
       (event) => event.title == '数据结构期末考试',
@@ -406,7 +453,166 @@ void main() {
     expect(exam.description, contains('教师：李四'));
     expect(exam.description, contains('班级：\n上课班级：'));
     expect(exam.description, contains('类型：期末考试'));
-    expect(exam.location, '南大鼓楼 逸夫楼201');
+    expect(exam.location, '逸夫楼201');
+  });
+
+  test('parses tagged midterm exams from other information', () async {
+    Map<String, dynamic> courseRow(
+      String name,
+      String otherInfo, {
+      int weekday = 1,
+    }) =>
+        {
+          'KSJC': 1,
+          'JSJC': 2,
+          'SKXQ': weekday,
+          'SKZC': '',
+          'KCM': name,
+          'KCH': name,
+          'XF': '2.5',
+          'JASMC': '原上课教室',
+          'JSHS': '张老师',
+          'JXBMC': '$name-001',
+          'SKBJ': '测试班',
+          // Deliberately use an opaque key: only the explicit tag identifies
+          // this as the page's “其他信息” value.
+          'SOME_OTHER_FIELD': otherInfo,
+        };
+
+    final repeated = courseRow(
+      '数据结构',
+      r'【期中考试】：\</br>时间：2026-04-25 10:30-12:30\</br>地点：馆1-304',
+    );
+    final rows = <Map<String, dynamic>>[
+      repeated,
+      {...repeated, 'SKXQ': 2},
+      courseRow(
+        '高等数学',
+        '【期中考试】:<br>时间: 2026-04-26 08:00-09:30<br>地点: 教101'
+            '【期中考试】：<br/>时间：2026-05-20 14:00～15:30',
+      ),
+      courseRow(
+        '大学物理',
+        '【期中考试】：\n时间：2026-05-02 18:30-20:00\n地点：自由文本地点',
+      ),
+      {
+        ...courseRow('微积分II', '占位文本'),
+        'KCM': null,
+        'SOME_OTHER_FIELD': {
+          'display': '&#12304;期中考试&#12305;：&lt;/br&gt;'
+              '时间：2026-04-25 10：30-12：30&lt;/br&gt;地点：馆1-304',
+        },
+      },
+      courseRow(
+        '无效信息',
+        '其他安排：2026-05-03 10:00-11:00\n'
+            '【期中考试】：\n时间：2026-02-30 10:00-11:00',
+      ),
+    ];
+    final scheduleRows = rows.map((row) {
+      final copy = Map<String, dynamic>.from(row);
+      copy.remove('SOME_OTHER_FIELD');
+      if (copy['JXBMC'] == '微积分II-001') {
+        copy['KCM'] = '微积分II';
+      }
+      return copy;
+    }).toList();
+
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (options.path.endsWith('/cxxszhxqkb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxszhxqkb': {'rows': scheduleRows},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {'rows': rows},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.path.endsWith('/cxxsksap.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxsksap': {'rows': <Map<String, dynamic>>[]},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            handler.reject(DioException(requestOptions: options));
+          },
+        ),
+      );
+
+    final bundle = await NjuScheduleService(FakeAuthService(dio))
+        .fetchUndergradScheduleForSemester(
+      undergradSession(),
+      semesterId: '2025-2026-2',
+      semesterName: '2025-2026学年 第2学期',
+      semesterStart: DateTime(2026, 3, 2),
+      semesterEnd: DateTime(2026, 7, 5),
+    );
+
+    expect(bundle.events, hasLength(5));
+    expect(bundle.examCount, 5);
+    expect(
+      bundle.events.map((event) => event.title),
+      containsAll([
+        '数据结构期中考试',
+        '高等数学期中考试',
+        '大学物理期中考试',
+        '微积分II期中考试',
+      ]),
+    );
+    expect(
+      bundle.events
+          .firstWhere((event) => event.start == DateTime(2026, 4, 25, 10, 30))
+          .location,
+      '馆1-304',
+    );
+    expect(
+      bundle.events
+          .firstWhere((event) => event.start == DateTime(2026, 5, 20, 14))
+          .location,
+      isNull,
+    );
+    expect(
+      bundle.events.every(
+        (event) => event.description.contains('类型：期中考试'),
+      ),
+      isTrue,
+    );
+    expect(
+      bundle.events
+          .firstWhere((event) => event.title == '微积分II期中考试')
+          .description,
+      contains('其他信息：&#12304;期中考试&#12305;'),
+    );
   });
 
   test('graduate generated descriptions use importer metadata', () async {
@@ -510,6 +716,6 @@ void main() {
     expect(description, contains('班级：高级算法班'));
     expect(description, contains('上课班级：'));
     expect(description, contains('选课备注：请带教材'));
-    expect(bundle.events.single.location, '南大鼓楼 仙林教学楼201');
+    expect(bundle.events.single.location, '仙林教学楼201');
   });
 }

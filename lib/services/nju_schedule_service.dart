@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:html/parser.dart' as html_parser;
 
 import '../models/login_models.dart';
 import '../models/nju_course.dart';
@@ -213,14 +214,49 @@ class NjuScheduleService {
       ['datas', 'cxxszhxqkb', 'rows'],
     );
 
+    // “其他信息” belongs to the course-list model used by the visible table,
+    // not to the structured weekly-schedule model above.
+    final courseListResp = await dio.post<dynamic>(
+      'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxskclb.do',
+      data: {
+        'XNXQDM': semesterId,
+        'pageSize': '9999',
+        'pageNumber': '1',
+      },
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
+    final courseListData = _ensureJsonMap(
+      courseListResp.data,
+      apiName: '本科-课程列表接口',
+    );
+    final courseListRows = _readRows(
+      courseListData,
+      ['datas', 'cxxskclb', 'rows'],
+    );
+
     final events = <NjuCourseEvent>[];
+    final midtermImportKeys = <String>{};
     for (final row in courseRows) {
       events.addAll(
         _mapUndergradCourse(row, semesterStart, semesterId, studentId),
       );
     }
+    for (final listRow in courseListRows) {
+      final row = _mergeUndergradCourseMetadata(listRow, courseRows);
+      for (final event in _mapUndergradMidtermExams(
+        row,
+        semesterId,
+        studentId,
+      )) {
+        // The course API can repeat course-level information on every meeting
+        // row. Import a given midterm only once in that case.
+        if (midtermImportKeys.add(event.importKey)) {
+          events.add(event);
+        }
+      }
+    }
 
-    var examCount = 0;
+    var examCount = midtermImportKeys.length;
     if (includeFinalExams) {
       final examsResp = await dio.post<dynamic>(
         'https://ehallapp.nju.edu.cn/jwapp/sys/studentWdksapApp/WdksapController/cxxsksap.do',
@@ -240,11 +276,11 @@ class NjuScheduleService {
         examsData,
         ['datas', 'cxxsksap', 'rows'],
       );
-      examCount = examRows.length;
       for (final row in examRows) {
         final event = _mapUndergradExam(row, semesterId, studentId);
         if (event != null) {
           events.add(event);
+          examCount++;
         }
       }
     }
@@ -309,36 +345,12 @@ class NjuScheduleService {
     final rawRows = _readRows(coursesData, ['datas', 'xspkjgcx', 'rows']);
     final mergedRows = _mergeGraduateRows(rawRows);
 
-    final courseListResp = await dio.post<dynamic>(
-      'https://ehallapp.nju.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/xsjxrwcx.do?_=1765716674587',
-      data: {
-        'XNXQDM': semesterId,
-        'XH': '',
-        'pageNumber': '1',
-        'pageSize': '100',
-      },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
-    );
-    final courseListData = _ensureJsonMap(
-      courseListResp.data,
-      apiName: '研究生-教学任务接口',
-    );
-    final courseListRows = _readRows(
-      courseListData,
-      ['datas', 'xsjxrwcx', 'rows'],
-    );
-    final courseIdToCampus = <String, String>{
-      for (final row in courseListRows)
-        '${row['KCDM']}': '${row['XQDM_DISPLAY'] ?? ''}',
-    };
-
     final events = <NjuCourseEvent>[];
     for (final row in mergedRows) {
       events.addAll(
         _mapGraduateCourse(
           row,
           semesterStart,
-          courseIdToCampus['${row['KCDM']}'],
           semesterId,
           studentId,
         ),
@@ -496,15 +508,12 @@ class NjuScheduleService {
     final weekday = _toInt(row['SKXQ']);
     final weekBitmap = '${row['SKZC'] ?? ''}';
     final title = '${row['KCM'] ?? '未命名课程'}';
-    final classroom = _stringOrNull(row['JASMC']);
+    final location = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['JSHS']) ?? _stringOrNull(row['SKJS']);
     final className = _stringOrNull(row['JXBMC']);
     final studentClasses = _stringOrNull(row['SKBJ']);
-    final campus = _stringOrNull(row['XXXQDM_DISPLAY']);
     final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
     final credits = _stringOrNull(row['XF']);
-    final location = _buildLocation(campus, classroom);
-
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
       if (weekBitmap[i] != '1') continue;
@@ -587,9 +596,7 @@ class NjuScheduleService {
     );
 
     final title = '${row['KCM'] ?? '未命名课程'}期末考试';
-    final campus = _stringOrNull(row['XXXQDM_DISPLAY']) ??
-        _stringOrNull(row['XQDM_DISPLAY']);
-    final location = _buildLocation(campus, _stringOrNull(row['JASMC']));
+    final location = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['ZJJSXM']);
     final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
     final credits = _stringOrNull(row['XF']);
@@ -616,10 +623,205 @@ class NjuScheduleService {
     );
   }
 
+  Map<String, dynamic> _mergeUndergradCourseMetadata(
+    Map<String, dynamic> listRow,
+    List<Map<String, dynamic>> scheduleRows,
+  ) {
+    final courseCode =
+        _stringOrNull(listRow['KCH']) ?? _stringOrNull(listRow['KCDM']);
+    final className = _stringOrNull(listRow['JXBMC']);
+    for (final scheduleRow in scheduleRows) {
+      final scheduleCourseCode = _stringOrNull(scheduleRow['KCH']) ??
+          _stringOrNull(scheduleRow['KCDM']);
+      final scheduleClassName = _stringOrNull(scheduleRow['JXBMC']);
+      final sameCourse = courseCode != null && scheduleCourseCode == courseCode;
+      final sameClass = className != null && scheduleClassName == className;
+      if (sameCourse || sameClass) {
+        final merged = Map<String, dynamic>.from(listRow);
+        for (final entry in scheduleRow.entries) {
+          if (_stringOrNull(merged[entry.key]) == null) {
+            merged[entry.key] = entry.value;
+          }
+        }
+        return merged;
+      }
+    }
+    return listRow;
+  }
+
+  List<NjuCourseEvent> _mapUndergradMidtermExams(
+    Map<String, dynamic> row,
+    String semesterId,
+    String studentId,
+  ) {
+    final courseTitle =
+        _stringOrNull(row['KCM']) ?? _stringOrNull(row['JXBMC']) ?? '未命名课程';
+    final title = '$courseTitle期中考试';
+    final teacher = _stringOrNull(row['JSHS']) ?? _stringOrNull(row['SKJS']);
+    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
+    final credits = _stringOrNull(row['XF']);
+    final className = _stringOrNull(row['JXBMC']);
+    final studentClasses = _stringOrNull(row['SKBJ']);
+    final identity = [courseCode, className]
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .join('|');
+    final events = <NjuCourseEvent>[];
+
+    // The field code behind the page's “其他信息” column is not stable or
+    // documented. Restricting discovery to scalar values that contain the
+    // explicit tag avoids guessing a field name and does not treat arbitrary
+    // dates elsewhere in the row as exams.
+    final taggedValues = _scalarTexts(row)
+        .where((value) => _normalizeOtherInfo(value).contains('期中考试'))
+        .toSet();
+
+    for (final rawText in taggedValues) {
+      for (final exam in _parseMidtermExamText(rawText)) {
+        final importKey = _buildImportKey(
+          'undergrad_midterm_exam|$identity',
+          title,
+          exam.start,
+          exam.end,
+          exam.location,
+        );
+        events.add(
+          NjuCourseEvent(
+            title: title,
+            start: exam.start,
+            end: exam.end,
+            location: exam.location,
+            importKey: importKey,
+            description: _buildDescription(
+              semesterId: semesterId,
+              importKey: importKey,
+              studentId: studentId,
+              courseCode: courseCode,
+              credits: credits,
+              teacher: teacher,
+              className: className,
+              studentClasses: studentClasses,
+              extraLines: [
+                '类型：期中考试',
+                '其他信息：${exam.rawText}',
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    return events;
+  }
+
+  List<({DateTime start, DateTime end, String? location, String rawText})>
+      _parseMidtermExamText(String rawText) {
+    final normalized = _normalizeOtherInfo(rawText);
+    final tagPattern = RegExp(r'【\s*期中考试\s*】\s*[：:]?');
+    final tags = tagPattern.allMatches(normalized).toList();
+    final exams =
+        <({DateTime start, DateTime end, String? location, String rawText})>[];
+
+    for (var index = 0; index < tags.length; index++) {
+      final sectionStart = tags[index].start;
+      final sectionEnd =
+          index + 1 < tags.length ? tags[index + 1].start : normalized.length;
+      final section = normalized.substring(sectionStart, sectionEnd).trim();
+      final timeMatch = RegExp(
+        r'时间\s*[：:]\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+'
+        r'(\d{1,2})[：:](\d{2})\s*[-–—~～至]\s*'
+        r'(\d{1,2})[：:](\d{2})',
+      ).firstMatch(section);
+      if (timeMatch == null) continue;
+
+      final parts = [
+        for (var group = 1; group <= 7; group++)
+          int.tryParse(timeMatch.group(group) ?? ''),
+      ];
+      if (parts.any((part) => part == null)) continue;
+      final year = parts[0]!;
+      final month = parts[1]!;
+      final day = parts[2]!;
+      final startHour = parts[3]!;
+      final startMinute = parts[4]!;
+      final endHour = parts[5]!;
+      final endMinute = parts[6]!;
+      if (startHour > 23 ||
+          endHour > 23 ||
+          startMinute > 59 ||
+          endMinute > 59) {
+        continue;
+      }
+
+      final start = DateTime(
+        year,
+        month,
+        day,
+        startHour,
+        startMinute,
+      );
+      // DateTime normalizes invalid calendar dates, so compare the components
+      // to reject values such as February 30 instead of silently shifting them.
+      if (start.year != year || start.month != month || start.day != day) {
+        continue;
+      }
+      final end = DateTime(year, month, day, endHour, endMinute);
+      if (!end.isAfter(start)) continue;
+
+      final locationMatch = RegExp(
+        r'地点\s*[：:]\s*([^\n]*)',
+      ).firstMatch(section);
+      final location = _stringOrNull(locationMatch?.group(1));
+      exams.add((
+        start: start,
+        end: end,
+        location: location,
+        rawText: rawText,
+      ));
+    }
+    return exams;
+  }
+
+  Iterable<String> _scalarTexts(dynamic value) sync* {
+    if (value is Map) {
+      for (final nested in value.values) {
+        yield* _scalarTexts(nested);
+      }
+      return;
+    }
+    if (value is Iterable) {
+      for (final nested in value) {
+        yield* _scalarTexts(nested);
+      }
+      return;
+    }
+    if (value != null) {
+      yield value.toString();
+    }
+  }
+
+  String _normalizeOtherInfo(String value) {
+    var text = value
+        .replaceAll(
+          RegExp(r'&lt;\s*/?\s*br\s*/?\s*&gt;', caseSensitive: false),
+          '\n',
+        )
+        .replaceAll(
+          RegExp(r'<\s*/?\s*br\s*/?\s*>', caseSensitive: false),
+          '\n',
+        )
+        .replaceAll(r'\r\n', '\n')
+        .replaceAll(r'\n', '\n')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    // The API sometimes returns HTML-escaped display text. Decoding after
+    // preserving break tags handles values such as &#12304;期中考试&#12305;.
+    text = html_parser.parseFragment(text).text ?? text;
+    return text.trim();
+  }
+
   List<NjuCourseEvent> _mapGraduateCourse(
     Map<String, dynamic> row,
     DateTime semesterStart,
-    String? campus,
     String semesterId,
     String studentId,
   ) {
@@ -628,13 +830,11 @@ class NjuScheduleService {
     final weekBitmap = '${row['ZCBH'] ?? ''}';
     final weekday = _toInt(row['XQ']);
     final title = '${row['KCMC'] ?? row['BJMC'] ?? '未命名课程'}';
-    final location = _stringOrNull(row['JASMC']);
+    final eventLocation = _stringOrNull(row['JASMC']);
     final teacher = _stringOrNull(row['JSXM']);
     final remark = _stringOrNull(row['XKBZ']);
     final courseCode = _stringOrNull(row['KCDM']);
     final credits = _stringOrNull(row['XF']);
-    final eventLocation = _buildLocation(campus, location);
-
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
       if (weekBitmap[i] != '1') continue;
@@ -717,20 +917,6 @@ class NjuScheduleService {
       RegExp(r'([,，])\s*'),
       (match) => '${match.group(1)}\n',
     );
-  }
-
-  String? _buildLocation(String? campus, String? location) {
-    final normalizedCampus = _stringOrNull(campus);
-    final normalizedLocation = _stringOrNull(location);
-    final campusPrefix = normalizedCampus == null
-        ? null
-        : '南大${String.fromCharCodes(normalizedCampus.runes.take(2))}';
-    final result = [campusPrefix, normalizedLocation]
-        .whereType<String>()
-        .where((part) => part.isNotEmpty)
-        .join(' ')
-        .trim();
-    return result.isEmpty ? null : result;
   }
 
   String _buildDescription({
