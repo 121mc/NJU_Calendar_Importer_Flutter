@@ -234,29 +234,7 @@ class NjuScheduleService {
       ['datas', 'cxxskclb', 'rows'],
     );
 
-    final events = <NjuCourseEvent>[];
-    final midtermImportKeys = <String>{};
-    for (final row in courseRows) {
-      events.addAll(
-        _mapUndergradCourse(row, semesterStart, semesterId, studentId),
-      );
-    }
-    for (final listRow in courseListRows) {
-      final row = _mergeUndergradCourseMetadata(listRow, courseRows);
-      for (final event in _mapUndergradMidtermExams(
-        row,
-        semesterId,
-        studentId,
-      )) {
-        // The course API can repeat course-level information on every meeting
-        // row. Import a given midterm only once in that case.
-        if (midtermImportKeys.add(event.importKey)) {
-          events.add(event);
-        }
-      }
-    }
-
-    var examCount = midtermImportKeys.length;
+    var examRows = <Map<String, dynamic>>[];
     if (includeFinalExams) {
       final examsResp = await dio.post<dynamic>(
         'https://ehallapp.nju.edu.cn/jwapp/sys/studentWdksapApp/WdksapController/cxxsksap.do',
@@ -272,29 +250,97 @@ class NjuScheduleService {
         examsResp.data,
         apiName: '本科-考试接口',
       );
-      final examRows = _readRows(
+      examRows = _readRows(
         examsData,
         ['datas', 'cxxsksap', 'rows'],
       );
-      for (final row in examRows) {
-        final event = _mapUndergradExam(row, semesterId, studentId);
-        if (event != null) {
-          events.add(event);
-          examCount++;
-        }
-      }
     }
 
-    events.sort((a, b) => a.start.compareTo(b.start));
+    final metadataById = <String, Map<String, dynamic>>{};
+    final scheduleRowsById = <String, List<Map<String, dynamic>>>{};
+    final listRowsById = <String, List<Map<String, dynamic>>>{};
+    final examRowsById = <String, List<Map<String, dynamic>>>{};
+
+    for (final scheduleRow in courseRows) {
+      final metadata =
+          _mergeUndergradCourseMetadata(scheduleRow, courseListRows);
+      final courseId = _undergradCourseId(metadata);
+      metadataById[courseId] = metadata;
+      scheduleRowsById.putIfAbsent(courseId, () => []).add(scheduleRow);
+    }
+    for (final listRow in courseListRows) {
+      final metadata = _mergeUndergradCourseMetadata(listRow, courseRows);
+      final courseId = _undergradCourseId(metadata);
+      metadataById.putIfAbsent(courseId, () => metadata);
+      listRowsById.putIfAbsent(courseId, () => []).add(listRow);
+    }
+    for (final examRow in examRows) {
+      final metadata = _mergeUndergradCourseMetadata(
+        examRow,
+        metadataById.values.toList(),
+      );
+      final courseId = _undergradCourseId(metadata);
+      metadataById.putIfAbsent(courseId, () => metadata);
+      examRowsById.putIfAbsent(courseId, () => []).add(examRow);
+    }
+
+    final courses = <NjuCourse>[];
+    for (final entry in metadataById.entries) {
+      final courseId = entry.key;
+      final metadata = entry.value;
+      final details = _undergradCourseDetails(metadata, studentId);
+      final sessions = <NjuCourseEvent>[
+        for (final row in scheduleRowsById[courseId] ?? const [])
+          ..._mapUndergradCourse(
+            row,
+            semesterStart,
+            semesterId,
+            courseId,
+            details,
+          ),
+      ];
+      final midtermExams = <NjuCourseEvent>[];
+      final midtermImportKeys = <String>{};
+      for (final row in listRowsById[courseId] ?? const []) {
+        for (final event in _mapUndergradMidtermExams(
+          row,
+          semesterId,
+          courseId,
+          details,
+        )) {
+          if (midtermImportKeys.add(event.importKey)) {
+            midtermExams.add(event);
+          }
+        }
+      }
+      final finalExams = <NjuCourseEvent>[
+        for (final row in examRowsById[courseId] ?? const [])
+          if (_mapUndergradExam(
+            row,
+            semesterId,
+            courseId,
+            details,
+          )
+              case final event?)
+            event,
+      ];
+      courses.add(
+        NjuCourse(
+          id: courseId,
+          details: details,
+          sessions: sessions,
+          midtermExams: midtermExams,
+          finalExams: finalExams,
+        ),
+      );
+    }
 
     return ScheduleBundle(
       semesterId: semesterId,
       semesterName: semesterName,
       semesterStart: semesterStart,
       semesterEnd: semesterEnd,
-      events: events,
-      courseCount: courseRows.length,
-      examCount: examCount,
+      courses: courses,
     );
   }
 
@@ -345,27 +391,37 @@ class NjuScheduleService {
     final rawRows = _readRows(coursesData, ['datas', 'xspkjgcx', 'rows']);
     final mergedRows = _mergeGraduateRows(rawRows);
 
-    final events = <NjuCourseEvent>[];
+    final detailsById = <String, NjuCourseDetails>{};
+    final sessionsById = <String, List<NjuCourseEvent>>{};
     for (final row in mergedRows) {
-      events.addAll(
-        _mapGraduateCourse(
-          row,
-          semesterStart,
-          semesterId,
-          studentId,
-        ),
-      );
+      final details = _graduateCourseDetails(row, studentId);
+      final courseId = _graduateCourseId(row);
+      detailsById.putIfAbsent(courseId, () => details);
+      sessionsById.putIfAbsent(courseId, () => []).addAll(
+            _mapGraduateCourse(
+              row,
+              semesterStart,
+              semesterId,
+              courseId,
+              details,
+            ),
+          );
     }
-    events.sort((a, b) => a.start.compareTo(b.start));
+    final courses = [
+      for (final entry in detailsById.entries)
+        NjuCourse(
+          id: entry.key,
+          details: entry.value,
+          sessions: sessionsById[entry.key] ?? const [],
+        ),
+    ];
 
     return ScheduleBundle(
       semesterId: semesterId,
       semesterName: semesterName,
       semesterStart: semesterStart,
       semesterEnd: semesterStart,
-      events: events,
-      courseCount: mergedRows.length,
-      examCount: 0,
+      courses: courses,
     );
   }
 
@@ -464,7 +520,8 @@ class NjuScheduleService {
     Map<String, dynamic> row,
     DateTime semesterStart,
     String semesterId,
-    String studentId,
+    String courseId,
+    NjuCourseDetails details,
   ) {
     final ksjc = _toInt(row['KSJC']);
     final jsjc = _toInt(row['JSJC']);
@@ -507,13 +564,8 @@ class NjuScheduleService {
 
     final weekday = _toInt(row['SKXQ']);
     final weekBitmap = '${row['SKZC'] ?? ''}';
-    final title = '${row['KCM'] ?? '未命名课程'}';
+    final title = details.courseName;
     final location = _stringOrNull(row['JASMC']);
-    final teacher = _stringOrNull(row['JSHS']) ?? _stringOrNull(row['SKJS']);
-    final className = _stringOrNull(row['JXBMC']);
-    final studentClasses = _stringOrNull(row['SKBJ']);
-    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
-    final credits = _stringOrNull(row['XF']);
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
       if (weekBitmap[i] != '1') continue;
@@ -542,12 +594,7 @@ class NjuScheduleService {
       final description = _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        studentId: studentId,
-        courseCode: courseCode,
-        credits: credits,
-        teacher: teacher,
-        className: className,
-        studentClasses: studentClasses,
+        details: details,
         extraLines: const [],
       );
       events.add(
@@ -558,6 +605,8 @@ class NjuScheduleService {
           location: location,
           description: description,
           importKey: importKey,
+          courseId: courseId,
+          kind: NjuCourseEventKind.session,
         ),
       );
     }
@@ -567,7 +616,8 @@ class NjuScheduleService {
   NjuCourseEvent? _mapUndergradExam(
     Map<String, dynamic> row,
     String semesterId,
-    String studentId,
+    String courseId,
+    NjuCourseDetails details,
   ) {
     final dateText = _stringOrNull(row['KSRQ']);
     final startText = _stringOrNull(row['KSKSSJ']);
@@ -595,11 +645,8 @@ class NjuScheduleService {
       int.parse(endParts[1]),
     );
 
-    final title = '${row['KCM'] ?? '未命名课程'}期末考试';
+    final title = '${details.courseName}期末考试';
     final location = _stringOrNull(row['JASMC']);
-    final teacher = _stringOrNull(row['ZJJSXM']);
-    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
-    final credits = _stringOrNull(row['XF']);
     final importKey =
         _buildImportKey('undergrad_exam', title, start, end, location);
 
@@ -612,14 +659,11 @@ class NjuScheduleService {
       description: _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        studentId: studentId,
-        courseCode: courseCode,
-        credits: credits,
-        teacher: teacher,
-        className: null,
-        studentClasses: null,
+        details: details,
         extraLines: const ['类型：期末考试'],
       ),
+      courseId: courseId,
+      kind: NjuCourseEventKind.finalExam,
     );
   }
 
@@ -649,23 +693,40 @@ class NjuScheduleService {
     return listRow;
   }
 
+  String _undergradCourseId(Map<String, dynamic> row) {
+    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
+    final className = _stringOrNull(row['JXBMC']);
+    final courseName = _stringOrNull(row['KCM']) ?? className ?? '未命名课程';
+    return [courseCode ?? courseName, className ?? '']
+        .where((value) => value.isNotEmpty)
+        .join('|');
+  }
+
+  NjuCourseDetails _undergradCourseDetails(
+    Map<String, dynamic> row,
+    String studentId,
+  ) {
+    final className = _stringOrNull(row['JXBMC']);
+    return NjuCourseDetails(
+      studentId: studentId,
+      courseName: _stringOrNull(row['KCM']) ?? className ?? '未命名课程',
+      courseCode: _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']),
+      credits: _stringOrNull(row['XF']),
+      teacher: _stringOrNull(row['JSHS']) ??
+          _stringOrNull(row['SKJS']) ??
+          _stringOrNull(row['ZJJSXM']),
+      className: className,
+      studentClasses: _stringOrNull(row['SKBJ']),
+    );
+  }
+
   List<NjuCourseEvent> _mapUndergradMidtermExams(
     Map<String, dynamic> row,
     String semesterId,
-    String studentId,
+    String courseId,
+    NjuCourseDetails details,
   ) {
-    final courseTitle =
-        _stringOrNull(row['KCM']) ?? _stringOrNull(row['JXBMC']) ?? '未命名课程';
-    final title = '$courseTitle期中考试';
-    final teacher = _stringOrNull(row['JSHS']) ?? _stringOrNull(row['SKJS']);
-    final courseCode = _stringOrNull(row['KCH']) ?? _stringOrNull(row['KCDM']);
-    final credits = _stringOrNull(row['XF']);
-    final className = _stringOrNull(row['JXBMC']);
-    final studentClasses = _stringOrNull(row['SKBJ']);
-    final identity = [courseCode, className]
-        .whereType<String>()
-        .where((value) => value.isNotEmpty)
-        .join('|');
+    final title = '${details.courseName}期中考试';
     final events = <NjuCourseEvent>[];
 
     // The field code behind the page's “其他信息” column is not stable or
@@ -679,7 +740,7 @@ class NjuScheduleService {
     for (final rawText in taggedValues) {
       for (final exam in _parseMidtermExamText(rawText)) {
         final importKey = _buildImportKey(
-          'undergrad_midterm_exam|$identity',
+          'undergrad_midterm_exam|$courseId',
           title,
           exam.start,
           exam.end,
@@ -695,17 +756,14 @@ class NjuScheduleService {
             description: _buildDescription(
               semesterId: semesterId,
               importKey: importKey,
-              studentId: studentId,
-              courseCode: courseCode,
-              credits: credits,
-              teacher: teacher,
-              className: className,
-              studentClasses: studentClasses,
+              details: details,
               extraLines: [
                 '类型：期中考试',
                 '其他信息：${exam.rawText}',
               ],
             ),
+            courseId: courseId,
+            kind: NjuCourseEventKind.midtermExam,
           ),
         );
       }
@@ -823,18 +881,16 @@ class NjuScheduleService {
     Map<String, dynamic> row,
     DateTime semesterStart,
     String semesterId,
-    String studentId,
+    String courseId,
+    NjuCourseDetails details,
   ) {
     final startTime = _hhmmToHourMinute(_toInt(row['KSSJ']));
     final endTime = _hhmmToHourMinute(_toInt(row['JSSJ']));
     final weekBitmap = '${row['ZCBH'] ?? ''}';
     final weekday = _toInt(row['XQ']);
-    final title = '${row['KCMC'] ?? row['BJMC'] ?? '未命名课程'}';
+    final title = details.courseName;
     final eventLocation = _stringOrNull(row['JASMC']);
-    final teacher = _stringOrNull(row['JSXM']);
     final remark = _stringOrNull(row['XKBZ']);
-    final courseCode = _stringOrNull(row['KCDM']);
-    final credits = _stringOrNull(row['XF']);
     final events = <NjuCourseEvent>[];
     for (var i = 0; i < weekBitmap.length; i++) {
       if (weekBitmap[i] != '1') continue;
@@ -863,12 +919,7 @@ class NjuScheduleService {
       final description = _buildDescription(
         semesterId: semesterId,
         importKey: importKey,
-        studentId: studentId,
-        courseCode: courseCode,
-        credits: credits,
-        teacher: teacher,
-        className: _stringOrNull(row['BJMC']),
-        studentClasses: _stringOrNull(row['SKBJ']),
+        details: details,
         extraLines: [
           if (remark != null && remark.isNotEmpty) '选课备注：$remark',
         ],
@@ -881,10 +932,37 @@ class NjuScheduleService {
           location: eventLocation,
           description: description,
           importKey: importKey,
+          courseId: courseId,
+          kind: NjuCourseEventKind.session,
         ),
       );
     }
     return events;
+  }
+
+  String _graduateCourseId(Map<String, dynamic> row) {
+    final courseCode = _stringOrNull(row['KCDM']);
+    final className = _stringOrNull(row['BJMC']);
+    final courseName = _stringOrNull(row['KCMC']) ?? className ?? '未命名课程';
+    return [courseCode ?? courseName, className ?? '']
+        .where((value) => value.isNotEmpty)
+        .join('|');
+  }
+
+  NjuCourseDetails _graduateCourseDetails(
+    Map<String, dynamic> row,
+    String studentId,
+  ) {
+    final className = _stringOrNull(row['BJMC']);
+    return NjuCourseDetails(
+      studentId: studentId,
+      courseName: _stringOrNull(row['KCMC']) ?? className ?? '未命名课程',
+      courseCode: _stringOrNull(row['KCDM']),
+      credits: _stringOrNull(row['XF']),
+      teacher: _stringOrNull(row['JSXM']),
+      className: className,
+      studentClasses: _stringOrNull(row['SKBJ']),
+    );
   }
 
   String _buildImportKey(
@@ -922,25 +1000,20 @@ class NjuScheduleService {
   String _buildDescription({
     required String semesterId,
     required String importKey,
-    required String studentId,
-    required String? courseCode,
-    required String? credits,
-    required String? teacher,
-    required String? className,
-    required String? studentClasses,
+    required NjuCourseDetails details,
     required List<String> extraLines,
   }) {
-    final formattedTeacher = _formatTeacher(teacher);
+    final formattedTeacher = _formatTeacher(details.teacher);
     final courseParts = [
-      if (courseCode != null && courseCode.isNotEmpty) courseCode,
-      if (credits != null && credits.isNotEmpty) '$credits学分',
+      if (details.courseCode case final courseCode?) courseCode,
+      if (details.credits case final credits?) '$credits学分',
     ];
     final detailLines = [
-      '$studentId的课程',
+      '${details.studentId}的课程',
       '课程：${courseParts.join('，')}',
       '教师：${formattedTeacher ?? ''}',
-      '班级：${className ?? ''}',
-      '上课班级：${studentClasses ?? ''}',
+      '班级：${details.className ?? ''}',
+      '上课班级：${details.studentClasses ?? ''}',
       ...extraLines,
     ];
 

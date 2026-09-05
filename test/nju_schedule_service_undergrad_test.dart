@@ -375,7 +375,17 @@ void main() {
                   requestOptions: options,
                   data: {
                     'datas': {
-                      'cxxskclb': {'rows': <Map<String, dynamic>>[]},
+                      'cxxskclb': {
+                        'rows': [
+                          {
+                            'KCH': 'CS101',
+                            'JXBMC': '数据结构-001',
+                            'QTXX': '【期中考试】：</br>'
+                                '时间：2025-10-25 10:30-12:30</br>'
+                                '地点：仙林教学楼102',
+                          },
+                        ],
+                      },
                     },
                     'code': '0',
                   },
@@ -430,16 +440,15 @@ void main() {
     expect(course.description, contains(CalendarImportMetadata.currentMarker));
     expect(course.description, contains('semester_id=2025-2026-1'));
     expect(course.description, contains('import_key='));
-    expect(
-      course.description,
-      startsWith(
-        '251250001的课程\n'
+    const commonDetails = '251250001的课程\n'
         '课程：CS101，3学分\n'
         '教师：张三,\n'
         '李四\n'
         '班级：数据结构-001\n'
-        '上课班级：计科一班\n\n',
-      ),
+        '上课班级：计科一班';
+    expect(
+      course.description,
+      startsWith('$commonDetails\n\n'),
     );
     expect(course.location, '仙林教学楼101');
 
@@ -449,11 +458,21 @@ void main() {
     expect(exam.description, contains(CalendarImportMetadata.currentMarker));
     expect(exam.description, contains('semester_id=2025-2026-1'));
     expect(exam.description, contains('import_key='));
-    expect(exam.description, startsWith('251250001的课程\n课程：CS101，3学分\n'));
-    expect(exam.description, contains('教师：李四'));
-    expect(exam.description, contains('班级：\n上课班级：'));
+    expect(exam.description, startsWith('$commonDetails\n类型：期末考试'));
     expect(exam.description, contains('类型：期末考试'));
     expect(exam.location, '逸夫楼201');
+    final midterm = bundle.events.firstWhere(
+      (event) => event.title == '数据结构期中考试',
+    );
+    expect(midterm.description, startsWith('$commonDetails\n类型：期中考试'));
+    expect(bundle.courses, hasLength(1));
+    expect(bundle.courses.single.sessions, hasLength(1));
+    expect(bundle.courses.single.midtermExams, hasLength(1));
+    expect(bundle.courses.single.finalExams, hasLength(1));
+    expect(bundle.courses.single.details.className, '数据结构-001');
+    expect(bundle.courses.single.addedClasses, isEmpty);
+    expect(bundle.courses.single.rescheduledClasses, isEmpty);
+    expect(bundle.courses.single.cancelledClasses, isEmpty);
   });
 
   test('parses tagged midterm exams from other information', () async {
@@ -580,6 +599,13 @@ void main() {
 
     expect(bundle.events, hasLength(5));
     expect(bundle.examCount, 5);
+    expect(bundle.courses, hasLength(5));
+    expect(
+      bundle.courses
+          .firstWhere((course) => course.details.courseName == '微积分II')
+          .midtermExams,
+      hasLength(1),
+    );
     expect(
       bundle.events.map((event) => event.title),
       containsAll([
@@ -707,6 +733,8 @@ void main() {
 
     expect(bundle.semesterId, '2020-2021-1');
     expect(bundle.events, hasLength(1));
+    expect(bundle.courses, hasLength(1));
+    expect(bundle.courses.single.sessions, hasLength(1));
     final description = bundle.events.single.description;
     expect(description, contains(CalendarImportMetadata.currentMarker));
     expect(description, contains('semester_id=2020-2021-1'));
