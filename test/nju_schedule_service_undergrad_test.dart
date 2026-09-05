@@ -440,10 +440,10 @@ void main() {
     expect(course.description, contains(CalendarImportMetadata.currentMarker));
     expect(course.description, contains('semester_id=2025-2026-1'));
     expect(course.description, contains('import_key='));
-    const commonDetails = '251250001的课程\n'
+    const commonDetails = '[251250001的课程]\n'
         '课程：CS101，3学分\n'
         '教师：张三,\n'
-        '李四\n'
+        '李四 13812345678\n'
         '班级：数据结构-001\n'
         '上课班级：计科一班';
     expect(
@@ -458,13 +458,12 @@ void main() {
     expect(exam.description, contains(CalendarImportMetadata.currentMarker));
     expect(exam.description, contains('semester_id=2025-2026-1'));
     expect(exam.description, contains('import_key='));
-    expect(exam.description, startsWith('$commonDetails\n类型：期末考试'));
-    expect(exam.description, contains('类型：期末考试'));
+    expect(exam.description, startsWith(commonDetails));
     expect(exam.location, '逸夫楼201');
     final midterm = bundle.events.firstWhere(
       (event) => event.title == '数据结构期中考试',
     );
-    expect(midterm.description, startsWith('$commonDetails\n类型：期中考试'));
+    expect(midterm.description, startsWith(commonDetails));
     expect(bundle.courses, hasLength(1));
     expect(bundle.courses.single.sessions, hasLength(1));
     expect(bundle.courses.single.midtermExams, hasLength(1));
@@ -629,15 +628,10 @@ void main() {
     );
     expect(
       bundle.events.every(
-        (event) => event.description.contains('类型：期中考试'),
+        (event) => !event.description.contains('类型：') &&
+            !event.description.contains('其他信息：'),
       ),
       isTrue,
-    );
-    expect(
-      bundle.events
-          .firstWhere((event) => event.title == '微积分II期中考试')
-          .description,
-      contains('其他信息：&#12304;期中考试&#12305;'),
     );
   });
 
@@ -739,10 +733,10 @@ void main() {
     expect(description, contains(CalendarImportMetadata.currentMarker));
     expect(description, contains('semester_id=2020-2021-1'));
     expect(description, contains('import_key='));
-    expect(description, startsWith('123456789012的课程\n课程：GRAD101，2.5学分\n'));
+    expect(description, startsWith('[123456789012的课程]\n课程：GRAD101，2.5学分\n'));
     expect(description, contains('教师：王五'));
     expect(description, contains('班级：高级算法班'));
-    expect(description, contains('上课班级：'));
+    expect(description, isNot(contains('上课班级：')));
     expect(description, contains('选课备注：请带教材'));
     expect(bundle.events.single.location, '仙林教学楼201');
   });

@@ -660,7 +660,7 @@ class NjuScheduleService {
         semesterId: semesterId,
         importKey: importKey,
         details: details,
-        extraLines: const ['类型：期末考试'],
+        extraLines: const [],
       ),
       courseId: courseId,
       kind: NjuCourseEventKind.finalExam,
@@ -757,10 +757,7 @@ class NjuScheduleService {
               semesterId: semesterId,
               importKey: importKey,
               details: details,
-              extraLines: [
-                '类型：期中考试',
-                '其他信息：${exam.rawText}',
-              ],
+              extraLines: const [],
             ),
             courseId: courseId,
             kind: NjuCourseEventKind.midtermExam,
@@ -977,21 +974,11 @@ class NjuScheduleService {
     return sha1.convert(utf8.encode(raw)).toString();
   }
 
-  String? _sanitizeTeacher(String? teacher) {
-    if (teacher == null) return null;
-
-    var text = teacher.trim();
+  String? _formatListField(String? value) {
+    if (value == null) return null;
+    final text = value.trim();
     if (text.isEmpty) return null;
-    text = text.replaceAll(RegExp(r'1\d{10}'), '');
-    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.isEmpty) return null;
-    return text;
-  }
-
-  String? _formatTeacher(String? teacher) {
-    final sanitized = _sanitizeTeacher(teacher);
-    if (sanitized == null) return null;
-    return sanitized.replaceAllMapped(
+    return text.replaceAllMapped(
       RegExp(r'([,，])\s*'),
       (match) => '${match.group(1)}\n',
     );
@@ -1003,17 +990,19 @@ class NjuScheduleService {
     required NjuCourseDetails details,
     required List<String> extraLines,
   }) {
-    final formattedTeacher = _formatTeacher(details.teacher);
+    final formattedTeacher = _formatListField(details.teacher);
+    final formattedStudentClasses = _formatListField(details.studentClasses);
     final courseParts = [
       if (details.courseCode case final courseCode?) courseCode,
       if (details.credits case final credits?) '$credits学分',
     ];
     final detailLines = [
-      '${details.studentId}的课程',
+      '[${details.studentId}的课程]',
       '课程：${courseParts.join('，')}',
       '教师：${formattedTeacher ?? ''}',
       '班级：${details.className ?? ''}',
-      '上课班级：${details.studentClasses ?? ''}',
+      if (formattedStudentClasses != null)
+        '上课班级：$formattedStudentClasses',
       ...extraLines,
     ];
 
