@@ -628,11 +628,237 @@ void main() {
     );
     expect(
       bundle.events.every(
-        (event) => !event.description.contains('类型：') &&
+        (event) =>
+            !event.description.contains('类型：') &&
             !event.description.contains('其他信息：'),
       ),
       isTrue,
     );
+  });
+
+  test('applies undergrad cancellations and reschedules to single sessions',
+      () async {
+    const adjustmentInfo = '【调课】(第1周 周一 1-2节 原教室) 临时调整教室为(新教室),'
+        '【调课】(第1周 周一 1-2节 PX2207815,LS2409001) 临时调整教师为(新教师),'
+        '【停课】(第4周 周一 1-2节) 发生临时停课,'
+        '【停课】(第2周 周一 1-2节) 发生临时停课,'
+        '【调课】(第3周 周一 1-2节 备用教室) 临时调整教室为(补课教室待确认),'
+        '【停课】(第9周 周一 1-2节) 发生临时停课,'
+        '【调课】(第5周 周一 1-2节) 临时调整时间为(周二 3-4节)';
+    final scheduleRows = <Map<String, dynamic>>[
+      {
+        'KSJC': 1,
+        'JSJC': 2,
+        'SKXQ': 1,
+        'SKZC': '1111',
+        'KCM': '数据结构',
+        'KCH': 'CS101',
+        'JASMC': '原教室',
+        'JSHS': '张老师',
+        'JXBMC': '数据结构-001',
+      },
+      {
+        'KSJC': 1,
+        'JSJC': 2,
+        'SKXQ': 1,
+        'SKZC': '0010',
+        'KCM': '数据结构',
+        'KCH': 'CS101',
+        'JASMC': '备用教室',
+        'JSHS': '张老师',
+        'JXBMC': '数据结构-001',
+      },
+    ];
+    final listRow = <String, dynamic>{
+      'KCM': '数据结构',
+      'KCH': 'CS101',
+      'JXBMC': '数据结构-001',
+      'OPAQUE_ADJUSTMENT_FIELD': adjustmentInfo,
+    };
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (options.path.endsWith('/cxxszhxqkb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxszhxqkb': {'rows': scheduleRows},
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {
+                        // Repeated rows must not apply the same change twice.
+                        'rows': [listRow, Map<String, dynamic>.from(listRow)],
+                      },
+                    },
+                    'code': '0',
+                  },
+                ),
+              );
+              return;
+            }
+            handler.reject(DioException(requestOptions: options));
+          },
+        ),
+      );
+
+    final bundle = await NjuScheduleService(FakeAuthService(dio))
+        .fetchUndergradScheduleForSemester(
+      undergradSession(),
+      semesterId: '2026-2027-1',
+      semesterName: '2026-2027学年 第1学期',
+      semesterStart: DateTime(2026, 9, 7),
+      semesterEnd: DateTime(2027, 1, 24),
+      includeFinalExams: false,
+    );
+
+    final course = bundle.courses.single;
+    expect(course.cancelledClasses, hasLength(3));
+    expect(course.rescheduledClasses, hasLength(3));
+    expect(course.unparsedScheduleChanges, hasLength(1));
+    expect(course.unparsedScheduleChanges.single, contains('临时调整时间为'));
+    expect(course.details.teacher, '张老师');
+
+    expect(course.sessions, hasLength(3));
+    expect(
+      course.sessions.any((event) => event.start == DateTime(2026, 9, 14, 8)),
+      isFalse,
+    );
+    expect(
+      course.sessions.any((event) => event.start == DateTime(2026, 9, 28, 8)),
+      isFalse,
+    );
+
+    final firstWeek = course.sessions.singleWhere(
+      (event) => event.start == DateTime(2026, 9, 7, 8),
+    );
+    expect(firstWeek.location, '新教室');
+    expect(firstWeek.description, contains('教师：新教师'));
+    expect(
+        firstWeek.description, contains('import_key=${firstWeek.importKey}'));
+
+    final thirdWeekEvents = course.sessions
+        .where((event) => event.start == DateTime(2026, 9, 21, 8))
+        .toList();
+    expect(thirdWeekEvents, hasLength(2));
+    expect(
+      thirdWeekEvents.map((event) => event.location),
+      containsAll(['原教室', '补课教室待确认']),
+    );
+    expect(
+      thirdWeekEvents
+          .firstWhere((event) => event.location == '补课教室待确认')
+          .description,
+      contains('import_key='),
+    );
+    expect(bundle.events, hasLength(3));
+  });
+
+  test('keeps schedule changes isolated between classes of one course',
+      () async {
+    final scheduleRows = <Map<String, dynamic>>[
+      {
+        'KSJC': 1,
+        'JSJC': 2,
+        'SKXQ': 1,
+        'SKZC': '1',
+        'KCM': '形势与政策',
+        'KCH': '00000080G',
+        'JASMC': '教105',
+        'JXBMC': '形势与政策37班',
+      },
+      {
+        'KSJC': 1,
+        'JSJC': 2,
+        'SKXQ': 1,
+        'SKZC': '1',
+        'KCM': '形势与政策',
+        'KCH': '00000080G',
+        'JASMC': '教105',
+        'JXBMC': '形势与政策40班',
+      },
+    ];
+    final listRows = <Map<String, dynamic>>[
+      {
+        'KCM': '形势与政策',
+        'KCH': '00000080G',
+        'JXBMC': '形势与政策40班',
+        'ADJUSTMENT': '【停课】(第1周 周一 1-2节) 发生临时停课',
+      },
+      {
+        'KCM': '形势与政策',
+        'KCH': '00000080G',
+        'JXBMC': '形势与政策37班',
+      },
+    ];
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (options.path.endsWith('/cxxszhxqkb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxszhxqkb': {'rows': scheduleRows},
+                    },
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.path.endsWith('/cxxskclb.do')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'datas': {
+                      'cxxskclb': {'rows': listRows},
+                    },
+                  },
+                ),
+              );
+              return;
+            }
+            handler.reject(DioException(requestOptions: options));
+          },
+        ),
+      );
+
+    final bundle = await NjuScheduleService(FakeAuthService(dio))
+        .fetchUndergradScheduleForSemester(
+      undergradSession(),
+      semesterId: '2026-2027-1',
+      semesterName: '2026-2027学年 第1学期',
+      semesterStart: DateTime(2026, 9, 7),
+      semesterEnd: DateTime(2027, 1, 24),
+      includeFinalExams: false,
+    );
+
+    final class37 = bundle.courses.singleWhere(
+      (course) => course.details.className == '形势与政策37班',
+    );
+    final class40 = bundle.courses.singleWhere(
+      (course) => course.details.className == '形势与政策40班',
+    );
+    expect(class37.sessions, hasLength(1));
+    expect(class37.cancelledClasses, isEmpty);
+    expect(class40.sessions, isEmpty);
+    expect(class40.cancelledClasses, hasLength(1));
   });
 
   test('graduate generated descriptions use importer metadata', () async {

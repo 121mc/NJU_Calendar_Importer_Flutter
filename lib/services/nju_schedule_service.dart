@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -46,6 +47,38 @@ class NjuScheduleService {
   NjuScheduleService(this._authService);
 
   final AuthService _authService;
+
+  static const _undergradStartTimes = [
+    [8, 0],
+    [9, 0],
+    [10, 10],
+    [11, 10],
+    [14, 0],
+    [15, 0],
+    [16, 10],
+    [17, 10],
+    [18, 30],
+    [19, 30],
+    [20, 30],
+    [21, 30],
+    [22, 30],
+  ];
+
+  static const _undergradEndTimes = [
+    [8, 50],
+    [9, 50],
+    [11, 0],
+    [12, 0],
+    [14, 50],
+    [15, 50],
+    [17, 0],
+    [18, 0],
+    [19, 20],
+    [20, 20],
+    [21, 20],
+    [22, 20],
+    [23, 20],
+  ];
 
   Future<ScheduleBundle> fetchCurrentSemesterSchedule(
     SessionInfo session, {
@@ -289,7 +322,7 @@ class NjuScheduleService {
       final courseId = entry.key;
       final metadata = entry.value;
       final details = _undergradCourseDetails(metadata, studentId);
-      final sessions = <NjuCourseEvent>[
+      final regularSessions = <NjuCourseEvent>[
         for (final row in scheduleRowsById[courseId] ?? const [])
           ..._mapUndergradCourse(
             row,
@@ -299,6 +332,18 @@ class NjuScheduleService {
             details,
           ),
       ];
+      final scheduleChanges = _parseUndergradScheduleChanges(
+        listRowsById[courseId] ?? const [],
+        courseId: courseId,
+      );
+      final sessions = _applyUndergradScheduleChanges(
+        regularSessions,
+        scheduleChanges.orderedChanges,
+        semesterStart: semesterStart,
+        semesterId: semesterId,
+        courseId: courseId,
+        details: details,
+      );
       final midtermExams = <NjuCourseEvent>[];
       final midtermImportKeys = <String>{};
       for (final row in listRowsById[courseId] ?? const []) {
@@ -331,6 +376,9 @@ class NjuScheduleService {
           sessions: sessions,
           midtermExams: midtermExams,
           finalExams: finalExams,
+          rescheduledClasses: scheduleChanges.rescheduledClasses,
+          cancelledClasses: scheduleChanges.cancelledClasses,
+          unparsedScheduleChanges: scheduleChanges.unparsedTexts,
         ),
       );
     }
@@ -527,38 +575,8 @@ class NjuScheduleService {
     final jsjc = _toInt(row['JSJC']);
     if (ksjc <= 0 || jsjc <= 0) return const [];
 
-    const startTimes = [
-      [8, 0],
-      [9, 0],
-      [10, 10],
-      [11, 10],
-      [14, 0],
-      [15, 0],
-      [16, 10],
-      [17, 10],
-      [18, 30],
-      [19, 30],
-      [20, 30],
-      [21, 30],
-      [22, 30],
-    ];
-    const endTimes = [
-      [8, 50],
-      [9, 50],
-      [11, 0],
-      [12, 0],
-      [14, 50],
-      [15, 50],
-      [17, 0],
-      [18, 0],
-      [19, 20],
-      [20, 20],
-      [21, 20],
-      [22, 20],
-      [23, 20],
-    ];
-
-    if (ksjc > startTimes.length || jsjc > endTimes.length) {
+    if (ksjc > _undergradStartTimes.length ||
+        jsjc > _undergradEndTimes.length) {
       return const [];
     }
 
@@ -574,15 +592,15 @@ class NjuScheduleService {
         date.year,
         date.month,
         date.day,
-        startTimes[ksjc - 1][0],
-        startTimes[ksjc - 1][1],
+        _undergradStartTimes[ksjc - 1][0],
+        _undergradStartTimes[ksjc - 1][1],
       );
       final end = DateTime(
         date.year,
         date.month,
         date.day,
-        endTimes[jsjc - 1][0],
-        endTimes[jsjc - 1][1],
+        _undergradEndTimes[jsjc - 1][0],
+        _undergradEndTimes[jsjc - 1][1],
       );
       final importKey = _buildImportKey(
         'undergrad',
@@ -611,6 +629,350 @@ class NjuScheduleService {
       );
     }
     return events;
+  }
+
+  _ParsedScheduleChanges _parseUndergradScheduleChanges(
+    List<Map<String, dynamic>> rows, {
+    required String courseId,
+  }) {
+    final rawEvents = <String>{};
+    for (final row in rows) {
+      for (final scalarText in _scalarTexts(row)) {
+        final normalized = _normalizeOtherInfo(scalarText);
+        final looksLikeScheduleChange = RegExp(
+          r'【\s*(?:停课|调课|加课)\s*】|'
+          r'【[^】]+】\s*[（(]\s*第\d+周\s+周|发生临时|临时调整',
+        ).hasMatch(normalized);
+        if (!looksLikeScheduleChange) continue;
+
+        for (final part in normalized.split(RegExp(r',(?=\s*【)'))) {
+          final eventText = part.trim();
+          if (eventText.isNotEmpty) rawEvents.add(eventText);
+        }
+      }
+    }
+
+    final orderedChanges = <NjuScheduleChange>[];
+    final cancelledClasses = <NjuCancelledClass>[];
+    final rescheduledClasses = <NjuRescheduledClass>[];
+    final unparsedTexts = <String>[];
+
+    for (final rawText in rawEvents) {
+      final change = _parseUndergradScheduleChange(rawText);
+      switch (change) {
+        case NjuCancelledClass cancelled:
+          orderedChanges.add(cancelled);
+          cancelledClasses.add(cancelled);
+        case NjuRescheduledClass rescheduled:
+          orderedChanges.add(rescheduled);
+          rescheduledClasses.add(rescheduled);
+        case NjuAddedClass added:
+          unparsedTexts.add(added.rawText);
+        case null:
+          unparsedTexts.add(rawText);
+      }
+    }
+
+    if (unparsedTexts.isNotEmpty) {
+      developer.log(
+        'Preserved ${unparsedTexts.length} unsupported schedule change(s) '
+        'for course $courseId.',
+        name: 'NjuScheduleService',
+      );
+    }
+
+    return _ParsedScheduleChanges(
+      orderedChanges: orderedChanges,
+      cancelledClasses: cancelledClasses,
+      rescheduledClasses: rescheduledClasses,
+      unparsedTexts: unparsedTexts,
+    );
+  }
+
+  NjuScheduleChange? _parseUndergradScheduleChange(String rawText) {
+    final cancelledMatch = RegExp(
+      r'^【\s*停课\s*】\s*[（(]\s*第(\d+)周\s+周([一二三四五六日天])\s+'
+      r'(\d+)\s*[-–—~～至]\s*(\d+)节\s*[）)]\s*发生临时停课\s*$',
+    ).firstMatch(rawText);
+    if (cancelledMatch != null) {
+      final coordinates = _parseScheduleChangeCoordinates(cancelledMatch);
+      if (coordinates == null) return null;
+      return NjuCancelledClass(
+        week: coordinates.week,
+        weekday: coordinates.weekday,
+        startSection: coordinates.startSection,
+        endSection: coordinates.endSection,
+        rawText: rawText,
+      );
+    }
+
+    final roomMatch = RegExp(
+      r'^【\s*调课\s*】\s*[（(]\s*第(\d+)周\s+周([一二三四五六日天])\s+'
+      r'(\d+)\s*[-–—~～至]\s*(\d+)节\s+(.+)\s*[）)]\s*'
+      r'临时调整教室为\s*[（(](.*)[）)]\s*$',
+    ).firstMatch(rawText);
+    if (roomMatch != null) {
+      final coordinates = _parseScheduleChangeCoordinates(roomMatch);
+      final originalRoom = _stringOrNull(roomMatch.group(5));
+      final newRoom = _stringOrNull(roomMatch.group(6));
+      if (coordinates == null || originalRoom == null || newRoom == null) {
+        return null;
+      }
+      return NjuRescheduledClass(
+        week: coordinates.week,
+        weekday: coordinates.weekday,
+        startSection: coordinates.startSection,
+        endSection: coordinates.endSection,
+        roomChange: NjuRoomChange(
+          originalRoom: originalRoom,
+          newRoom: newRoom,
+        ),
+        rawText: rawText,
+      );
+    }
+
+    final teacherMatch = RegExp(
+      r'^【\s*调课\s*】\s*[（(]\s*第(\d+)周\s+周([一二三四五六日天])\s+'
+      r'(\d+)\s*[-–—~～至]\s*(\d+)节\s+(.+)\s*[）)]\s*'
+      r'临时调整教师为\s*[（(](.*)[）)]\s*$',
+    ).firstMatch(rawText);
+    if (teacherMatch != null) {
+      final coordinates = _parseScheduleChangeCoordinates(teacherMatch);
+      final originalTeacher = _stringOrNull(teacherMatch.group(5));
+      final newTeacher = _stringOrNull(teacherMatch.group(6));
+      if (coordinates == null ||
+          originalTeacher == null ||
+          newTeacher == null) {
+        return null;
+      }
+      return NjuRescheduledClass(
+        week: coordinates.week,
+        weekday: coordinates.weekday,
+        startSection: coordinates.startSection,
+        endSection: coordinates.endSection,
+        teacherChange: NjuTeacherChange(
+          originalTeacher: originalTeacher,
+          newTeacher: newTeacher,
+        ),
+        rawText: rawText,
+      );
+    }
+
+    return null;
+  }
+
+  ({int week, int weekday, int startSection, int endSection})?
+      _parseScheduleChangeCoordinates(RegExpMatch match) {
+    final week = int.tryParse(match.group(1) ?? '');
+    final weekday = _chineseWeekday(match.group(2));
+    final startSection = int.tryParse(match.group(3) ?? '');
+    final endSection = int.tryParse(match.group(4) ?? '');
+    if (week == null ||
+        week <= 0 ||
+        weekday == null ||
+        startSection == null ||
+        startSection <= 0 ||
+        endSection == null ||
+        endSection < startSection ||
+        endSection > _undergradEndTimes.length) {
+      return null;
+    }
+    return (
+      week: week,
+      weekday: weekday,
+      startSection: startSection,
+      endSection: endSection,
+    );
+  }
+
+  int? _chineseWeekday(String? value) => switch (value) {
+        '一' => DateTime.monday,
+        '二' => DateTime.tuesday,
+        '三' => DateTime.wednesday,
+        '四' => DateTime.thursday,
+        '五' => DateTime.friday,
+        '六' => DateTime.saturday,
+        '日' || '天' => DateTime.sunday,
+        _ => null,
+      };
+
+  List<NjuCourseEvent> _applyUndergradScheduleChanges(
+    List<NjuCourseEvent> regularSessions,
+    List<NjuScheduleChange> changes, {
+    required DateTime semesterStart,
+    required String semesterId,
+    required String courseId,
+    required NjuCourseDetails details,
+  }) {
+    final sessions = List<NjuCourseEvent>.of(regularSessions);
+    for (final change in changes) {
+      final target = _undergradScheduleChangeTarget(change, semesterStart);
+      if (target == null) continue;
+
+      final matchingIndexes = <int>[
+        for (var index = 0; index < sessions.length; index++)
+          if (sessions[index].start == target.start &&
+              sessions[index].end == target.end)
+            index,
+      ];
+
+      if (change is NjuCancelledClass) {
+        if (matchingIndexes.isEmpty) {
+          _logUnmatchedScheduleChange(courseId, change);
+        }
+        sessions.removeWhere(
+          (event) => event.start == target.start && event.end == target.end,
+        );
+        continue;
+      }
+      if (change is! NjuRescheduledClass || matchingIndexes.isEmpty) {
+        _logUnmatchedScheduleChange(courseId, change);
+        continue;
+      }
+
+      final roomChange = change.roomChange;
+      if (roomChange != null) {
+        var roomIndexes = matchingIndexes;
+        if (matchingIndexes.length > 1) {
+          roomIndexes = matchingIndexes
+              .where(
+                (index) => sessions[index].location == roomChange.originalRoom,
+              )
+              .toList();
+        }
+        if (roomIndexes.length != 1) {
+          _logUnmatchedScheduleChange(courseId, change);
+          continue;
+        }
+        final index = roomIndexes.single;
+        sessions[index] = _copyUndergradSessionWithRoom(
+          sessions[index],
+          roomChange.newRoom,
+        );
+      }
+
+      final teacherChange = change.teacherChange;
+      if (teacherChange != null) {
+        for (final index in matchingIndexes) {
+          sessions[index] = _copyUndergradSessionWithTeacher(
+            sessions[index],
+            teacherChange.newTeacher,
+            semesterId: semesterId,
+            details: details,
+          );
+        }
+      }
+    }
+    return sessions;
+  }
+
+  ({DateTime start, DateTime end})? _undergradScheduleChangeTarget(
+    NjuScheduleChange change,
+    DateTime semesterStart,
+  ) {
+    final week = change.week;
+    final weekday = change.weekday;
+    final startSection = change.startSection;
+    final endSection = change.endSection;
+    if (week == null ||
+        weekday == null ||
+        startSection == null ||
+        endSection == null ||
+        startSection <= 0 ||
+        startSection > _undergradStartTimes.length ||
+        endSection <= 0 ||
+        endSection > _undergradEndTimes.length) {
+      return null;
+    }
+
+    final date = semesterStart.add(
+      Duration(days: (week - 1) * DateTime.daysPerWeek + weekday - 1),
+    );
+    return (
+      start: DateTime(
+        date.year,
+        date.month,
+        date.day,
+        _undergradStartTimes[startSection - 1][0],
+        _undergradStartTimes[startSection - 1][1],
+      ),
+      end: DateTime(
+        date.year,
+        date.month,
+        date.day,
+        _undergradEndTimes[endSection - 1][0],
+        _undergradEndTimes[endSection - 1][1],
+      ),
+    );
+  }
+
+  NjuCourseEvent _copyUndergradSessionWithRoom(
+    NjuCourseEvent event,
+    String? newRoom,
+  ) {
+    final importKey = _buildImportKey(
+      'undergrad',
+      event.title,
+      event.start,
+      event.end,
+      newRoom,
+    );
+    final description = event.description.replaceFirst(
+      RegExp(r'^import_key=.*$', multiLine: true),
+      'import_key=$importKey',
+    );
+    return NjuCourseEvent(
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      location: newRoom,
+      description: description,
+      importKey: importKey,
+      courseId: event.courseId,
+      kind: event.kind,
+    );
+  }
+
+  NjuCourseEvent _copyUndergradSessionWithTeacher(
+    NjuCourseEvent event,
+    String? newTeacher, {
+    required String semesterId,
+    required NjuCourseDetails details,
+  }) {
+    final adjustedDetails = NjuCourseDetails(
+      studentId: details.studentId,
+      courseName: details.courseName,
+      courseCode: details.courseCode,
+      credits: details.credits,
+      teacher: newTeacher,
+      className: details.className,
+      studentClasses: details.studentClasses,
+    );
+    return NjuCourseEvent(
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      location: event.location,
+      description: _buildDescription(
+        semesterId: semesterId,
+        importKey: event.importKey,
+        details: adjustedDetails,
+        extraLines: const [],
+      ),
+      importKey: event.importKey,
+      courseId: event.courseId,
+      kind: event.kind,
+    );
+  }
+
+  void _logUnmatchedScheduleChange(
+    String courseId,
+    NjuScheduleChange change,
+  ) {
+    developer.log(
+      'Could not uniquely match ${change.runtimeType} for course $courseId.',
+      name: 'NjuScheduleService',
+    );
   }
 
   NjuCourseEvent? _mapUndergradExam(
@@ -680,7 +1042,10 @@ class NjuScheduleService {
       final scheduleClassName = _stringOrNull(scheduleRow['JXBMC']);
       final sameCourse = courseCode != null && scheduleCourseCode == courseCode;
       final sameClass = className != null && scheduleClassName == className;
-      if (sameCourse || sameClass) {
+      final conflictingClasses = className != null &&
+          scheduleClassName != null &&
+          className != scheduleClassName;
+      if (sameClass || (sameCourse && !conflictingClasses)) {
         final merged = Map<String, dynamic>.from(listRow);
         for (final entry in scheduleRow.entries) {
           if (_stringOrNull(merged[entry.key]) == null) {
@@ -1001,8 +1366,7 @@ class NjuScheduleService {
       '课程：${courseParts.join('，')}',
       '教师：${formattedTeacher ?? ''}',
       '班级：${details.className ?? ''}',
-      if (formattedStudentClasses != null)
-        '上课班级：$formattedStudentClasses',
+      if (formattedStudentClasses != null) '上课班级：$formattedStudentClasses',
       ...extraLines,
     ];
 
@@ -1059,4 +1423,18 @@ class NjuScheduleService {
     final minute = value % 100;
     return (hour, minute);
   }
+}
+
+class _ParsedScheduleChanges {
+  const _ParsedScheduleChanges({
+    required this.orderedChanges,
+    required this.cancelledClasses,
+    required this.rescheduledClasses,
+    required this.unparsedTexts,
+  });
+
+  final List<NjuScheduleChange> orderedChanges;
+  final List<NjuCancelledClass> cancelledClasses;
+  final List<NjuRescheduledClass> rescheduledClasses;
+  final List<String> unparsedTexts;
 }

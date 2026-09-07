@@ -52,6 +52,7 @@ void main() {
     expect(course.addedClasses, isEmpty);
     expect(course.rescheduledClasses, isEmpty);
     expect(course.cancelledClasses, isEmpty);
+    expect(course.unparsedScheduleChanges, isEmpty);
 
     final bundle = ScheduleBundle(
       semesterId: '2025-2026-2',

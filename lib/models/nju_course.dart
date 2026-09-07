@@ -158,6 +158,7 @@ class NjuCourse {
     this.addedClasses = const [],
     this.rescheduledClasses = const [],
     this.cancelledClasses = const [],
+    this.unparsedScheduleChanges = const [],
   });
 
   final String id;
@@ -170,6 +171,7 @@ class NjuCourse {
   final List<NjuAddedClass> addedClasses;
   final List<NjuRescheduledClass> rescheduledClasses;
   final List<NjuCancelledClass> cancelledClasses;
+  final List<String> unparsedScheduleChanges;
 
   List<NjuCourseEvent> get events => [
         ...sessions,
