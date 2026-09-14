@@ -441,7 +441,7 @@ ScheduleBundle _emptyBundleFor(NjuSemester semester) {
 
 Future<WebLoginPage> _startBackgroundLogin(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({
-    'privacy_policy_accepted_20260730': true,
+    'privacy_policy_accepted_20260914': true,
   });
   WebViewPlatform.instance = WidgetFakeWebViewPlatform();
 
@@ -484,7 +484,7 @@ void main() {
     expect(app.darkTheme?.snackBarTheme.backgroundColor, Colors.black);
   });
 
-  testWidgets('previous privacy consent must accept the 20260730 policy', (
+  testWidgets('previous privacy consent must accept the 20260914 policy', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -508,13 +508,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('隐私政策与用户说明'), findsOneWidget);
-    expect(find.textContaining('2026年7月30日更新了隐私政策'), findsOneWidget);
+    expect(find.textContaining('2026年9月14日更新了隐私政策'), findsOneWidget);
 
     await tester.tap(find.text('同意并继续'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool('privacy_policy_accepted_20260730'), isTrue);
+    expect(prefs.getBool('privacy_policy_accepted_20260914'), isTrue);
   });
 
   testWidgets('new app log immediately replaces the current one', (
@@ -547,7 +547,7 @@ void main() {
     'restored undergrad session shows semester picker before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -580,7 +580,7 @@ void main() {
     'failed startup semester fetch automatically logs in and retries once',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       WebViewPlatform.instance = WidgetFakeWebViewPlatform();
       final authService = WidgetFakeAuthService(
@@ -633,7 +633,7 @@ void main() {
     'fetching selected undergrad semester reveals calendar sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -668,7 +668,7 @@ void main() {
     'undergrad current-semester fallback warns before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final scheduleService = WidgetFakeScheduleService(
         options: _semesterOptionsWithMissingCurrent(),
@@ -697,7 +697,7 @@ void main() {
     'selecting a non-current undergrad semester forwards full fetch arguments',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -735,7 +735,7 @@ void main() {
     'restored graduate session shows semester card before fetching schedule',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(options: options);
@@ -771,7 +771,7 @@ void main() {
     'empty selected undergrad semester shows dialog without sync controls',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({
-        'privacy_policy_accepted_20260730': true,
+        'privacy_policy_accepted_20260914': true,
       });
       final options = _semesterOptions();
       final scheduleService = WidgetFakeScheduleService(
@@ -804,7 +804,7 @@ void main() {
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_20260730': true,
+      'privacy_policy_accepted_20260914': true,
     });
 
     await tester.pumpWidget(
@@ -839,7 +839,7 @@ void main() {
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_20260730': true,
+      'privacy_policy_accepted_20260914': true,
     });
     final calendarSyncService = WidgetFakeCalendarSyncService(
       calendars: const [
@@ -925,7 +925,7 @@ void main() {
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_20260730': true,
+      'privacy_policy_accepted_20260914': true,
     });
     final authService = WidgetFakeAuthService(
       restoredSession: _undergradSession(),
@@ -965,7 +965,7 @@ void main() {
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'privacy_policy_accepted_20260730': true,
+      'privacy_policy_accepted_20260914': true,
     });
     final authService = WidgetFakeAuthService(
       restoredSession: _undergradSession(),

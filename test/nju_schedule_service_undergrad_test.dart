@@ -1,3 +1,4 @@
+import 'package:nju_calendar_importer_flutter/services/holiday_service.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -89,7 +90,8 @@ void main() {
         ),
       );
 
-    final service = NjuScheduleService(FakeAuthService(dio));
+    final service = NjuScheduleService(FakeAuthService(dio),
+        holidayService: EmptyHolidayService());
     final result =
         await service.fetchUndergradSemesterOptions(undergradSession());
 
@@ -204,7 +206,8 @@ void main() {
         ),
       );
 
-    final service = NjuScheduleService(FakeAuthService(dio));
+    final service = NjuScheduleService(FakeAuthService(dio),
+        holidayService: EmptyHolidayService());
     final bundle = await service.fetchCurrentSemesterSchedule(
       undergradSession(),
     );
@@ -300,7 +303,8 @@ void main() {
         ),
       );
 
-    final service = NjuScheduleService(FakeAuthService(dio));
+    final service = NjuScheduleService(FakeAuthService(dio),
+        holidayService: EmptyHolidayService());
     final semester = (await service.fetchUndergradScheduleForSemester(
       undergradSession(),
       semesterId: '2025-2026-1',
@@ -426,7 +430,8 @@ void main() {
         ),
       );
 
-    final service = NjuScheduleService(FakeAuthService(dio));
+    final service = NjuScheduleService(FakeAuthService(dio),
+        holidayService: EmptyHolidayService());
     final bundle = await service.fetchUndergradScheduleForSemester(
       undergradSession(),
       semesterId: '2025-2026-1',
@@ -587,7 +592,8 @@ void main() {
         ),
       );
 
-    final bundle = await NjuScheduleService(FakeAuthService(dio))
+    final bundle = await NjuScheduleService(FakeAuthService(dio),
+            holidayService: EmptyHolidayService())
         .fetchUndergradScheduleForSemester(
       undergradSession(),
       semesterId: '2025-2026-2',
@@ -946,7 +952,8 @@ void main() {
         ),
       );
 
-    final service = NjuScheduleService(FakeAuthService(dio));
+    final service = NjuScheduleService(FakeAuthService(dio),
+        holidayService: EmptyHolidayService());
     final bundle = await service.fetchCurrentSemesterSchedule(
       graduateSession(),
     );
@@ -966,4 +973,9 @@ void main() {
     expect(description, contains('选课备注：请带教材'));
     expect(bundle.events.single.location, '仙林教学楼201');
   });
+}
+
+class EmptyHolidayService extends HolidayService {
+  @override
+  Future<List<HolidayRule>> fetch(String semesterId) async => [];
 }

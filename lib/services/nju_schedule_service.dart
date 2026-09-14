@@ -11,6 +11,8 @@ import '../models/nju_semester.dart';
 import '../models/school_type.dart';
 import 'auth_service.dart';
 import 'calendar_import_metadata.dart';
+import 'holiday_service.dart';
+import 'schedule_rules.dart';
 
 class UndergradSemesterOptions {
   const UndergradSemesterOptions({
@@ -44,7 +46,10 @@ class UndergradSemesterOptions {
 }
 
 class NjuScheduleService {
-  NjuScheduleService(this._authService);
+  NjuScheduleService(this._authService, {HolidayService? holidayService})
+      : _holidayService = holidayService ?? HolidayService();
+
+  final HolidayService _holidayService;
 
   final AuthService _authService;
 
@@ -229,6 +234,7 @@ class NjuScheduleService {
     required String studentId,
     required bool includeFinalExams,
   }) async {
+    final holidays = await _holidayService.fetch(semesterId);
     final coursesResp = await dio.post<dynamic>(
       'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
       data: {
@@ -369,11 +375,36 @@ class NjuScheduleService {
               case final event?)
             event,
       ];
+      final changes = parseScheduleChanges([
+        for (final row in [
+          ...?scheduleRowsById[courseId],
+          ...?listRowsById[courseId]
+        ])
+          ..._scalarTexts(row)
+              .map(_normalizeOtherInfo)
+              .where((text) => RegExp(r'【(?:停课|加课|调课)】').hasMatch(text)),
+      ]);
       courses.add(
         NjuCourse(
           id: courseId,
           details: details,
-          sessions: sessions,
+          sessions: applyScheduleRules(
+              sessions, semesterStart, changes, holidays,
+              addedClassTemplate: NjuCourseEvent(
+                  title: details.courseName,
+                  start: semesterStart,
+                  end: semesterStart,
+                  location: null,
+                  importKey: '',
+                  courseId: courseId,
+                  description: _buildDescription(
+                      semesterId: semesterId,
+                      importKey: '',
+                      details: details,
+                      extraLines: const []))),
+          addedClasses: changes.whereType<NjuAddedClass>().toList(),
+          cancelledClasses: changes.whereType<NjuCancelledClass>().toList(),
+          rescheduledClasses: changes.whereType<NjuRescheduledClass>().toList(),
           midtermExams: midtermExams,
           finalExams: finalExams,
           rescheduledClasses: scheduleChanges.rescheduledClasses,
@@ -422,6 +453,7 @@ class NjuScheduleService {
     final currentSemester = eligible.last;
     final semesterId = '${currentSemester['XNXQDM']}';
     final semesterName = '${currentSemester['XNXQDM_DISPLAY'] ?? semesterId}';
+    final holidays = await _holidayService.fetch(semesterId);
     final rawSemesterAnchor = _parseDateTime('${currentSemester['KBKFRQ']}');
     // 研究生接口中的 KBKFRQ 更像“课表开放/锚点日期”，不一定正好是周一。
     // 先归一化到该周周一，再叠加 XQ(周几) 与 ZCBH(周次)，避免整体 weekday 固定偏移。
@@ -460,7 +492,8 @@ class NjuScheduleService {
         NjuCourse(
           id: entry.key,
           details: entry.value,
-          sessions: sessionsById[entry.key] ?? const [],
+          sessions: applyScheduleRules(sessionsById[entry.key] ?? const [],
+              semesterStart, const [], holidays),
         ),
     ];
 

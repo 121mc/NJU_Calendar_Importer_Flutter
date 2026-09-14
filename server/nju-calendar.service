@@ -1,0 +1,17 @@
+[Unit]
+Description=NJU Calendar holiday API
+After=network.target
+[Service]
+User=nju-calendar
+Group=nju-calendar
+WorkingDirectory=/opt/nju-calendar
+ExecStart=/usr/bin/python3 /opt/nju-calendar/app.py
+Restart=on-failure
+StateDirectory=nju-calendar
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nju-calendar
+[Install]
+WantedBy=multi-user.target
