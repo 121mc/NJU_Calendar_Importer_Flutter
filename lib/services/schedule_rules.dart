@@ -35,7 +35,11 @@ const sectionEnds = [
 ];
 
 NjuCourseEvent reviseEvent(NjuCourseEvent e,
-    {DateTime? start, DateTime? end, String? location, String? teacher}) {
+    {DateTime? start,
+    DateTime? end,
+    String? location,
+    String? teacher,
+    DateTime? holidayOriginalDate}) {
   start ??= e.start;
   end ??= e.end;
   location ??= e.location;
@@ -45,6 +49,12 @@ NjuCourseEvent reviseEvent(NjuCourseEvent e,
       .toString();
   var description = e.description.replaceAll(
       RegExp(r'^import_key=.*$', multiLine: true), 'import_key=$key');
+  if (holidayOriginalDate != null) {
+    description = description.replaceFirst(
+      '\n',
+      '\n调休：原${holidayOriginalDate.year}年${holidayOriginalDate.month}月${holidayOriginalDate.day}日的课程\n',
+    );
+  }
   if (teacher != null) description = '$description\n本次授课教师：$teacher';
   return NjuCourseEvent(
       title: e.title,
@@ -218,7 +228,8 @@ List<NjuCourseEvent> applyScheduleRules(
       if (target != null) {
         final moved = reviseEvent(e,
             start: at(target, e.start.hour * 60 + e.start.minute),
-            end: at(target, e.end.hour * 60 + e.end.minute));
+            end: at(target, e.end.hour * 60 + e.end.minute),
+            holidayOriginalDate: day(e.start));
         // A cancellation explicitly scheduled on the makeup date also wins.
         if (!changes
             .whereType<NjuCancelledClass>()

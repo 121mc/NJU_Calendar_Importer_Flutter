@@ -407,8 +407,6 @@ class NjuScheduleService {
           rescheduledClasses: changes.whereType<NjuRescheduledClass>().toList(),
           midtermExams: midtermExams,
           finalExams: finalExams,
-          rescheduledClasses: scheduleChanges.rescheduledClasses,
-          cancelledClasses: scheduleChanges.cancelledClasses,
           unparsedScheduleChanges: scheduleChanges.unparsedTexts,
         ),
       );
@@ -1389,7 +1387,6 @@ class NjuScheduleService {
     required List<String> extraLines,
   }) {
     final formattedTeacher = _formatListField(details.teacher);
-    final formattedStudentClasses = _formatListField(details.studentClasses);
     final courseParts = [
       if (details.courseCode case final courseCode?) courseCode,
       if (details.credits case final credits?) '$credits学分',
@@ -1399,7 +1396,9 @@ class NjuScheduleService {
       '课程：${courseParts.join('，')}',
       '教师：${formattedTeacher ?? ''}',
       '班级：${details.className ?? ''}',
-      if (formattedStudentClasses != null) '上课班级：$formattedStudentClasses',
+      if (details.studentClasses != null &&
+          details.studentClasses!.trim().isNotEmpty)
+        '上课班级：${details.studentClasses!.trim()}',
       ...extraLines,
     ];
 

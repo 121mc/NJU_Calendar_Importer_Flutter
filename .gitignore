@@ -1,6 +1,7 @@
 .DS_Store
 .fvm/
 .dart_tool/
+.claude
 .packages
 .pub/
 build/
