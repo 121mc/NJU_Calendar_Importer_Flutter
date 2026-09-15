@@ -1,0 +1,601 @@
+package to.bullet.device_calendar_plus_android
+
+import android.app.Activity
+import android.content.Context
+import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.MethodChannel.MethodCallHandler
+import io.flutter.plugin.common.MethodChannel.Result
+import io.flutter.plugin.common.PluginRegistry
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+/** DeviceCalendarPlusAndroidPlugin */
+class DeviceCalendarPlusAndroidPlugin :
+    FlutterPlugin,
+    MethodCallHandler,
+    ActivityAware,
+    PluginRegistry.RequestPermissionsResultListener,
+    PluginRegistry.ActivityResultListener {
+
+    private lateinit var channel: MethodChannel
+    private lateinit var calendarWorker: ExecutorService
+    private var appContext: Context? = null
+    private var activity: Activity? = null
+    private var permissionService: PermissionService? = null
+    private var calendarService: CalendarService? = null
+    private var eventsService: EventsService? = null
+    private var showEventModalResult: Result? = null
+    private var createEventModalResult: Result? = null
+
+    companion object {
+        private const val SHOW_EVENT_REQUEST_CODE = 1001
+        private const val CREATE_EVENT_REQUEST_CODE = 1002
+    }
+
+    override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        calendarWorker = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "calendar-io")
+        }
+        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "device_calendar_plus_android")
+        channel.setMethodCallHandler(this)
+
+        val context = flutterPluginBinding.applicationContext
+        appContext = context
+        calendarService = CalendarService(context)
+        eventsService = EventsService(context)
+        permissionService = PermissionService(context)
+    }
+
+    override fun onMethodCall(call: MethodCall, result: Result) {
+        // ContentResolver calls can block for seconds on slower devices. Keep
+        // them ordered on one worker; permission dialogs and activities stay
+        // on the platform thread. MethodChannel.Result supports any thread.
+        when (call.method) {
+            "listCalendars", "listSources", "createCalendar", "updateCalendar",
+            "deleteCalendar", "listEvents", "getEvent", "createEvent",
+            "deleteEvent", "updateEvent" -> calendarWorker.execute {
+                try {
+                    dispatchMethodCall(call, result)
+                } catch (error: Exception) {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+            else -> dispatchMethodCall(call, result)
+        }
+    }
+
+    private fun dispatchMethodCall(call: MethodCall, result: Result) {
+        when (call.method) {
+            "requestPermissions" -> handleRequestPermissions(result)
+            "hasPermissions" -> handleHasPermissions(result)
+            "openAppSettings" -> handleOpenAppSettings(result)
+            "listCalendars" -> handleListCalendars(result)
+            "listSources" -> handleListSources(result)
+            "createCalendar" -> handleCreateCalendar(call, result)
+            "updateCalendar" -> handleUpdateCalendar(call, result)
+            "deleteCalendar" -> handleDeleteCalendar(call, result)
+            "listEvents" -> handleListEvents(call, result)
+            "getEvent" -> handleGetEvent(call, result)
+            "showEventModal" -> handleShowEventModal(call, result)
+            "showCreateEventModal" -> handleShowCreateEventModal(call, result)
+            "createEvent" -> handleCreateEvent(call, result)
+            "deleteEvent" -> handleDeleteEvent(call, result)
+            "updateEvent" -> handleUpdateEvent(call, result)
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun handleRequestPermissions(result: Result) {
+        val service = permissionService!!
+        
+        service.requestPermissions { serviceResult ->
+            serviceResult.fold(
+                onSuccess = { status -> result.success(status) },
+                onFailure = { error ->
+                    if (error is PermissionException) {
+                        result.error(error.code, error.message, null)
+                    } else {
+                        result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                    }
+                }
+            )
+        }
+    }
+    
+    private fun handleHasPermissions(result: Result) {
+        val service = permissionService!!
+        
+        val serviceResult = service.hasPermissions()
+        serviceResult.fold(
+            onSuccess = { status -> result.success(status) },
+            onFailure = { error ->
+                if (error is PermissionException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleOpenAppSettings(result: Result) {
+        val currentActivity = activity
+        if (currentActivity == null) {
+            result.error(
+                PlatformExceptionCodes.UNKNOWN_ERROR,
+                "Activity not available",
+                null
+            )
+            return
+        }
+        
+        try {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:${currentActivity.packageName}")
+            )
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            currentActivity.startActivity(intent)
+            result.success(null)
+        } catch (e: Exception) {
+            result.error(
+                PlatformExceptionCodes.UNKNOWN_ERROR,
+                "Failed to open app settings: ${e.message}",
+                null
+            )
+        }
+    }
+    
+    private fun handleListCalendars(result: Result) {
+        val service = calendarService!!
+        
+        val serviceResult = service.listCalendars()
+        serviceResult.fold(
+            onSuccess = { calendars -> result.success(calendars) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleListSources(result: Result) {
+        val service = calendarService!!
+
+        val serviceResult = service.listSources()
+        serviceResult.fold(
+            onSuccess = { sources -> result.success(sources) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+
+    private fun handleCreateCalendar(call: MethodCall, result: Result) {
+        val service = calendarService ?: error("CalendarService not initialized - plugin lifecycle error")
+
+        // Parse arguments
+        val name = call.argument<String>("name")
+        val colorHex = call.argument<String>("colorHex")
+        val accountName = call.argument<String>("accountName")
+        val accountType = call.argument<String>("accountType")
+        
+        if (name == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid name",
+                null
+            )
+            return
+        }
+        
+        val serviceResult = service.createCalendar(name, colorHex, accountName, accountType)
+        serviceResult.fold(
+            onSuccess = { calendarId -> result.success(calendarId) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleUpdateCalendar(call: MethodCall, result: Result) {
+        val service = calendarService ?: error("CalendarService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val calendarId = call.argument<String>("calendarId")
+        val name = call.argument<String>("name")
+        val colorHex = call.argument<String>("colorHex")
+        
+        if (calendarId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid calendarId",
+                null
+            )
+            return
+        }
+        
+        val serviceResult = service.updateCalendar(calendarId, name, colorHex)
+        serviceResult.fold(
+            onSuccess = { result.success(null) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleDeleteCalendar(call: MethodCall, result: Result) {
+        val service = calendarService ?: error("CalendarService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val calendarId = call.argument<String>("calendarId")
+        
+        if (calendarId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid calendarId",
+                null
+            )
+            return
+        }
+        
+        val serviceResult = service.deleteCalendar(calendarId)
+        serviceResult.fold(
+            onSuccess = { result.success(null) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleListEvents(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val startDateMillis = call.argument<Long>("startDate")
+        val endDateMillis = call.argument<Long>("endDate")
+        val calendarIds = call.argument<List<String>>("calendarIds")
+        
+        if (startDateMillis == null || endDateMillis == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid startDate or endDate",
+                null
+            )
+            return
+        }
+        
+        val startDate = java.util.Date(startDateMillis)
+        val endDate = java.util.Date(endDateMillis)
+        
+        val serviceResult = service.retrieveEvents(startDate, endDate, calendarIds)
+        serviceResult.fold(
+            onSuccess = { events -> result.success(events) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleGetEvent(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val eventId = call.argument<String>("eventId")
+        val timestamp = call.argument<Long>("timestamp")
+        
+        if (eventId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid eventId",
+                null
+            )
+            return
+        }
+        
+        val serviceResult = service.getEvent(eventId, timestamp)
+        serviceResult.fold(
+            onSuccess = { event -> result.success(event) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleShowEventModal(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        val currentActivity = activity ?: error("Activity not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val eventId = call.argument<String>("eventId")
+        val timestamp = call.argument<Long>("timestamp")
+        
+        if (eventId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid eventId",
+                null
+            )
+            return
+        }
+        
+        // Store the result callback to call when activity returns
+        showEventModalResult = result
+        
+        val serviceResult = service.showEvent(currentActivity, eventId, timestamp, SHOW_EVENT_REQUEST_CODE)
+        serviceResult.fold(
+            onSuccess = { /* Result will be sent in onActivityResult */ },
+            onFailure = { error ->
+                // Clear stored result on error
+                showEventModalResult = null
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleShowCreateEventModal(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        val currentActivity = activity ?: error("Activity not initialized - plugin lifecycle error")
+
+        val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
+
+        createEventModalResult = result
+
+        val serviceResult = service.showCreateEvent(
+            activityContext = currentActivity,
+            title = args["title"] as? String,
+            startDate = args["startDate"] as? Long,
+            endDate = args["endDate"] as? Long,
+            description = args["description"] as? String,
+            location = args["location"] as? String,
+            isAllDay = args["isAllDay"] as? Boolean,
+            recurrenceRule = args["recurrenceRule"] as? String,
+            availability = args["availability"] as? String,
+            requestCode = CREATE_EVENT_REQUEST_CODE,
+        )
+        serviceResult.fold(
+            onSuccess = { /* Result will be sent in onActivityResult */ },
+            onFailure = { error ->
+                createEventModalResult = null
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+
+    private fun handleCreateEvent(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val calendarId = call.argument<String>("calendarId")
+        val title = call.argument<String>("title")
+        val startDateMillis = call.argument<Long>("startDate")
+        val endDateMillis = call.argument<Long>("endDate")
+        val isAllDay = call.argument<Boolean>("isAllDay")
+        val description = call.argument<String>("description")
+        val location = call.argument<String>("location")
+        val url = call.argument<String>("url")
+        val timeZone = call.argument<String>("timeZone")
+        val availability = call.argument<String>("availability")
+        val recurrenceRule = call.argument<String>("recurrenceRule")
+        
+        // Validate required arguments
+        if (calendarId == null || title == null || startDateMillis == null || 
+            endDateMillis == null || isAllDay == null || availability == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing required arguments for createEvent",
+                null
+            )
+            return
+        }
+        
+        val startDate = java.util.Date(startDateMillis)
+        val endDate = java.util.Date(endDateMillis)
+        
+        val serviceResult = service.createEvent(
+            calendarId,
+            title,
+            startDate,
+            endDate,
+            isAllDay,
+            description,
+            location,
+            url,
+            timeZone,
+            availability,
+            recurrenceRule
+        )
+        
+        serviceResult.fold(
+            onSuccess = { eventId -> result.success(eventId) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleDeleteEvent(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        
+        // Parse arguments
+        val eventId = call.argument<String>("eventId")
+        
+        if (eventId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid eventId",
+                null
+            )
+            return
+        }
+        
+        val serviceResult = service.deleteEvent(eventId)
+        serviceResult.fold(
+            onSuccess = { result.success(null) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+    
+    private fun handleUpdateEvent(call: MethodCall, result: Result) {
+        val service = eventsService ?: error("EventsService not initialized - plugin lifecycle error")
+        
+        // Parse required arguments
+        val eventId = call.argument<String>("eventId")
+        
+        if (eventId == null) {
+            result.error(
+                PlatformExceptionCodes.INVALID_ARGUMENTS,
+                "Missing or invalid eventId",
+                null
+            )
+            return
+        }
+        
+        // Parse optional arguments (all can be null)
+        val title = call.argument<String>("title")
+        val startDateMillis = call.argument<Long>("startDate")
+        val endDateMillis = call.argument<Long>("endDate")
+        val description = call.argument<String>("description")
+        val location = call.argument<String>("location")
+        val isAllDay = call.argument<Boolean>("isAllDay")
+        val timeZone = call.argument<String>("timeZone")
+        val availability = call.argument<String>("availability")
+        
+        // Convert dates if provided
+        val startDate = startDateMillis?.let { java.util.Date(it) }
+        val endDate = endDateMillis?.let { java.util.Date(it) }
+        
+        val serviceResult = service.updateEvent(
+            eventId,
+            title,
+            startDate,
+            endDate,
+            description,
+            location,
+            isAllDay,
+            timeZone,
+            availability
+        )
+        
+        serviceResult.fold(
+            onSuccess = { result.success(null) },
+            onFailure = { error ->
+                if (error is CalendarException) {
+                    result.error(error.code, error.message, null)
+                } else {
+                    result.error(PlatformExceptionCodes.UNKNOWN_ERROR, error.message, null)
+                }
+            }
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ): Boolean {
+        return permissionService?.onRequestPermissionsResult(requestCode, permissions, grantResults) ?: false
+    }
+    
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        if (requestCode == SHOW_EVENT_REQUEST_CODE) {
+            showEventModalResult?.success(null)
+            showEventModalResult = null
+            return true
+        }
+        if (requestCode == CREATE_EVENT_REQUEST_CODE) {
+            createEventModalResult?.success(null)
+            createEventModalResult = null
+            return true
+        }
+        return false
+    }
+
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        channel.setMethodCallHandler(null)
+        // Drain accepted operations without blocking the UI thread. The data
+        // services only hold application context and must outlive queued work.
+        calendarWorker.shutdown()
+        appContext = null
+        permissionService = null
+    }
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        permissionService = PermissionService(binding.activity)
+        binding.addRequestPermissionsResultListener(this)
+        binding.addActivityResultListener(this)
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+        // Downgrade to app context — hasPermissions() still works
+        permissionService = appContext?.let { PermissionService(it) }
+        showEventModalResult = null
+        createEventModalResult = null
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        permissionService = PermissionService(binding.activity)
+        binding.addRequestPermissionsResultListener(this)
+        binding.addActivityResultListener(this)
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
+        // Downgrade to app context — hasPermissions() still works
+        permissionService = appContext?.let { PermissionService(it) }
+        showEventModalResult = null
+        createEventModalResult = null
+    }
+}

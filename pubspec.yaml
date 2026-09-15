@@ -21,6 +21,12 @@ dependencies:
   webview_cookie_manager_flutter: 3.0.1
   webview_flutter: ^4.13.1
 
+dependency_overrides:
+  device_calendar_plus_android:
+    path: third_party/device_calendar_plus_android
+  device_calendar_plus_ios:
+    path: third_party/device_calendar_plus_ios
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
