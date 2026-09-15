@@ -119,6 +119,16 @@ fvm flutter run
 fvm flutter build apk --debug
 ```
 
+## 开源协议
+
+Copyright (c) 2026 mc_121
+
+除另有声明的第三方代码外，本项目采用 [GNU General Public License v3.0](LICENSE)（`GPL-3.0-only`，仅第 3 版）授权。
+
+允许使用、修改和商业分发；分发本项目或其衍生作品时，须遵守 GPL v3，包括提供对应源码、保留版权和许可声明等要求。本项目不提供任何担保，具体条款见 [LICENSE](LICENSE)。
+
+`third_party/` 中的第三方代码保留各自的许可证与版权声明；其他依赖遵循其各自的许可证。
+
 ## 免责声明
 
 本项目仅供学习交流与个人课程管理使用，请勿用于违反学校规定或影响学校系统正常运行的用途。
