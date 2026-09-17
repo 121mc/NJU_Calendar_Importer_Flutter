@@ -656,9 +656,6 @@ class _HomePageState extends State<HomePage> {
 
       final calendars = results[0] as List<Calendar>;
       final bundle = results[1] as ScheduleBundle;
-      if (calendars.isEmpty) {
-        throw Exception('当前设备没有可写入的日历。');
-      }
 
       if (bundle.events.isEmpty) {
         setState(() {

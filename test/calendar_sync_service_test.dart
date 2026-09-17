@@ -15,8 +15,10 @@ class CalendarSyncFakePlatform extends DeviceCalendarPlusPlatform
   final deletedEventIds = <String>[];
   final listEventCalls =
       <({DateTime start, DateTime end, List<String>? calendarIds})>[];
+  final createdCalendarNames = <String>[];
   List<Map<String, dynamic>> calendars = const [];
   List<Map<String, dynamic>> events = const [];
+  String createdCalendarId = 'calendar-id';
 
   @override
   Future<String?> hasPermissions() async => permission.name;
@@ -38,8 +40,10 @@ class CalendarSyncFakePlatform extends DeviceCalendarPlusPlatform
     String name,
     String? colorHex,
     CreateCalendarPlatformOptions? platformOptions,
-  ) async =>
-      'calendar-id';
+  ) async {
+    createdCalendarNames.add(name);
+    return createdCalendarId;
+  }
 
   @override
   Future<void> updateCalendar(
@@ -159,6 +163,47 @@ void main() {
   setUp(() {
     fakePlatform = CalendarSyncFakePlatform();
     DeviceCalendarPlusPlatform.instance = fakePlatform;
+  });
+
+  test('creates nju_calendar when no writable calendar exists', () async {
+    fakePlatform.calendars = const [
+      {
+        'id': 'read-only',
+        'name': '订阅日历',
+        'readOnly': true,
+      },
+    ];
+    fakePlatform.createdCalendarId = 'nju-calendar-id';
+
+    final calendars = await CalendarSyncService().listWritableCalendars();
+
+    expect(fakePlatform.createdCalendarNames, ['nju_calendar']);
+    expect(
+      calendars,
+      const [
+        Calendar(
+          id: 'nju-calendar-id',
+          name: 'nju_calendar',
+          readOnly: false,
+        ),
+      ],
+    );
+  });
+
+  test('keeps existing writable calendars without creating another one',
+      () async {
+    fakePlatform.calendars = const [
+      {
+        'id': 'personal',
+        'name': '个人日历',
+        'readOnly': false,
+      },
+    ];
+
+    final calendars = await CalendarSyncService().listWritableCalendars();
+
+    expect(fakePlatform.createdCalendarNames, isEmpty);
+    expect(calendars.single.id, 'personal');
   });
 
   test('overwrite range uses official semester boundaries when present', () {

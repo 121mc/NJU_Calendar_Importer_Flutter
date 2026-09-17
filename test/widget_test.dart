@@ -30,6 +30,7 @@ class WidgetFakeCalendarPlatform extends DeviceCalendarPlusPlatform
   final CalendarPermissionStatus requestedPermissionStatus;
   var permissionCheckCalls = 0;
   var permissionRequestCalls = 0;
+  final createdCalendarNames = <String>[];
 
   @override
   Future<String?> hasPermissions() async {
@@ -57,8 +58,10 @@ class WidgetFakeCalendarPlatform extends DeviceCalendarPlusPlatform
     String name,
     String? colorHex,
     CreateCalendarPlatformOptions? platformOptions,
-  ) async =>
-      'calendar-id';
+  ) async {
+    createdCalendarNames.add(name);
+    return 'calendar-id';
+  }
 
   @override
   Future<void> updateCalendar(
@@ -961,12 +964,14 @@ void main() {
     },
   );
 
-  testWidgets('empty writable calendar list blocks the schedule result', (
+  testWidgets('empty writable calendar list creates nju_calendar', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
       'privacy_policy_accepted_20260914': true,
     });
+    final calendarPlatform = WidgetFakeCalendarPlatform();
+    DeviceCalendarPlusPlatform.instance = calendarPlatform;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -977,9 +982,7 @@ void main() {
           scheduleService: WidgetFakeScheduleService(
             options: _semesterOptions(),
           ),
-          calendarSyncService: WidgetFakeCalendarSyncService(
-            calendars: const [],
-          ),
+          calendarSyncService: CalendarSyncService(),
         ),
       ),
     );
@@ -988,9 +991,9 @@ void main() {
     await tester.tap(find.text('拉取所选学期课表'));
     await tester.pumpAndSettle();
 
-    expect(find.text('拉取课表失败'), findsOneWidget);
-    expect(find.text('当前设备没有可写入的日历。'), findsOneWidget);
-    expect(find.text('已获取 2025-2026学年 第2学期'), findsNothing);
+    expect(calendarPlatform.createdCalendarNames, ['nju_calendar']);
+    expect(find.text('nju_calendar'), findsOneWidget);
+    expect(find.text('已获取 2025-2026学年 第2学期'), findsOneWidget);
   });
 
   testWidgets('current-semester delete confirms before calling service', (

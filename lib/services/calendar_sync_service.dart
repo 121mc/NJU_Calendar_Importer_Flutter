@@ -14,6 +14,8 @@ class CalendarOverwriteRange {
 }
 
 class CalendarSyncService {
+  static const defaultCalendarName = 'nju_calendar';
+
   static CalendarOverwriteRange overwriteRangeFor(ScheduleBundle bundle) {
     if (bundle.semesterEnd.isAfter(bundle.semesterStart)) {
       return CalendarOverwriteRange(
@@ -66,7 +68,22 @@ class CalendarSyncService {
   Future<List<Calendar>> listWritableCalendars() async {
     await _ensurePermissions();
     final calendars = await DeviceCalendar.instance.listCalendars();
-    return calendars.where((calendar) => !calendar.readOnly).toList();
+    final writable = calendars.where((calendar) => !calendar.readOnly).toList();
+    if (writable.isNotEmpty) return writable;
+
+    final calendarId = await DeviceCalendar.instance.createCalendar(
+      name: defaultCalendarName,
+    );
+    if (calendarId.trim().isEmpty) {
+      throw Exception('创建系统日历 $defaultCalendarName 失败。');
+    }
+    return [
+      Calendar(
+        id: calendarId,
+        name: defaultCalendarName,
+        readOnly: false,
+      ),
+    ];
   }
 
   Future<CalendarSyncResult> syncEvents({
