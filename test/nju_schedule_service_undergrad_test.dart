@@ -1,4 +1,4 @@
-import 'package:nju_calendar_importer_flutter/services/holiday_service.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -8,6 +8,7 @@ import 'package:nju_calendar_importer_flutter/models/nju_semester.dart';
 import 'package:nju_calendar_importer_flutter/models/school_type.dart';
 import 'package:nju_calendar_importer_flutter/services/auth_service.dart';
 import 'package:nju_calendar_importer_flutter/services/calendar_import_metadata.dart';
+import 'package:nju_calendar_importer_flutter/services/holiday_service.dart';
 import 'package:nju_calendar_importer_flutter/services/nju_schedule_service.dart';
 import 'package:nju_calendar_importer_flutter/services/storage_service.dart';
 
@@ -337,6 +338,64 @@ void main() {
     expect(examPayload['XNXQDM'], '2025-2026-1');
   });
 
+  test('holiday and undergrad schedule requests start concurrently', () async {
+    final requestedPaths = <String>[];
+    final scheduleRequestsStarted = Completer<void>();
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requestedPaths.add(options.path);
+            if (requestedPaths.length == 2) {
+              scheduleRequestsStarted.complete();
+            }
+            final model = options.path.endsWith('/cxxszhxqkb.do')
+                ? 'cxxszhxqkb'
+                : 'cxxskclb';
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'datas': {
+                    model: {'rows': <Map<String, dynamic>>[]},
+                  },
+                  'code': '0',
+                },
+              ),
+            );
+          },
+        ),
+      );
+    final holidayService = BlockingHolidayService();
+    final fetch = NjuScheduleService(
+      FakeAuthService(dio),
+      holidayService: holidayService,
+    ).fetchUndergradScheduleForSemester(
+      undergradSession(),
+      semesterId: '2026-2027-1',
+      semesterName: '2026-2027学年 第1学期',
+      semesterStart: DateTime(2026, 9, 7),
+      semesterEnd: DateTime(2027, 1, 24),
+      includeFinalExams: false,
+    );
+
+    await Future.wait([
+      holidayService.started.future,
+      scheduleRequestsStarted.future,
+    ]).timeout(const Duration(seconds: 2));
+
+    expect(
+      requestedPaths,
+      containsAll([
+        'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
+        'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxskclb.do',
+      ]),
+    );
+
+    holidayService.complete();
+    await fetch;
+  });
+
   test('undergrad generated descriptions use importer metadata', () async {
     final dio = Dio()
       ..interceptors.add(
@@ -650,7 +709,7 @@ void main() {
         '【停课】(第2周 周一 1-2节) 发生临时停课,'
         '【调课】(第3周 周一 1-2节 备用教室) 临时调整教室为(补课教室待确认),'
         '【停课】(第9周 周一 1-2节) 发生临时停课,'
-        '【调课】(第5周 周一 1-2节) 临时调整时间为(周二 3-4节)';
+        '【调课】(第5周 周一 1-2节) 临时调整时间为(第5周 周二 3-4节)';
     final scheduleRows = <Map<String, dynamic>>[
       {
         'KSJC': 1,
@@ -733,12 +792,12 @@ void main() {
 
     final course = bundle.courses.single;
     expect(course.cancelledClasses, hasLength(3));
-    expect(course.rescheduledClasses, hasLength(3));
+    expect(course.rescheduledClasses, hasLength(4));
     expect(course.unparsedScheduleChanges, hasLength(1));
     expect(course.unparsedScheduleChanges.single, contains('临时调整时间为'));
     expect(course.details.teacher, '张老师');
 
-    expect(course.sessions, hasLength(3));
+    expect(course.sessions, hasLength(2));
     expect(
       course.sessions.any((event) => event.start == DateTime(2026, 9, 14, 8)),
       isFalse,
@@ -759,18 +818,15 @@ void main() {
     final thirdWeekEvents = course.sessions
         .where((event) => event.start == DateTime(2026, 9, 21, 8))
         .toList();
-    expect(thirdWeekEvents, hasLength(2));
-    expect(
-      thirdWeekEvents.map((event) => event.location),
-      containsAll(['原教室', '补课教室待确认']),
-    );
+    expect(thirdWeekEvents, hasLength(1));
+    expect(thirdWeekEvents.single.location, '补课教室待确认');
     expect(
       thirdWeekEvents
           .firstWhere((event) => event.location == '补课教室待确认')
           .description,
       contains('import_key='),
     );
-    expect(bundle.events, hasLength(3));
+    expect(bundle.events, hasLength(2));
   });
 
   test('keeps schedule changes isolated between classes of one course',
@@ -978,4 +1034,19 @@ void main() {
 class EmptyHolidayService extends HolidayService {
   @override
   Future<List<HolidayRule>> fetch(String semesterId) async => [];
+}
+
+class BlockingHolidayService extends HolidayService {
+  final started = Completer<void>();
+  final _result = Completer<List<HolidayRule>>();
+
+  @override
+  Future<List<HolidayRule>> fetch(String semesterId) {
+    started.complete();
+    return _result.future;
+  }
+
+  void complete() {
+    _result.complete(const []);
+  }
 }

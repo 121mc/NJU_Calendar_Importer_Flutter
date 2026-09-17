@@ -21,13 +21,27 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 class WidgetFakeCalendarPlatform extends DeviceCalendarPlusPlatform
     with MockPlatformInterfaceMixin {
-  @override
-  Future<String?> hasPermissions() async =>
-      CalendarPermissionStatus.granted.name;
+  WidgetFakeCalendarPlatform({
+    this.permissionStatus = CalendarPermissionStatus.granted,
+    this.requestedPermissionStatus = CalendarPermissionStatus.granted,
+  });
+
+  final CalendarPermissionStatus permissionStatus;
+  final CalendarPermissionStatus requestedPermissionStatus;
+  var permissionCheckCalls = 0;
+  var permissionRequestCalls = 0;
 
   @override
-  Future<String?> requestPermissions() async =>
-      CalendarPermissionStatus.granted.name;
+  Future<String?> hasPermissions() async {
+    permissionCheckCalls += 1;
+    return permissionStatus.name;
+  }
+
+  @override
+  Future<String?> requestPermissions() async {
+    permissionRequestCalls += 1;
+    return requestedPermissionStatus.name;
+  }
 
   @override
   Future<void> openAppSettings() async {}
@@ -160,6 +174,7 @@ class WidgetFakeScheduleService extends NjuScheduleService {
     ScheduleBundle? bundle,
     ScheduleBundle? currentBundle,
     this.optionFetchFailures = 0,
+    this.scheduleError,
   })  : bundle = bundle ?? _bundleFor(options.currentSemester!),
         currentBundle =
             currentBundle ?? bundle ?? _bundleFor(options.currentSemester!),
@@ -169,10 +184,12 @@ class WidgetFakeScheduleService extends NjuScheduleService {
   final ScheduleBundle bundle;
   final ScheduleBundle currentBundle;
   final int optionFetchFailures;
+  final Object? scheduleError;
   var optionFetchCalls = 0;
   var fetchedOptions = false;
   var fetchedSchedule = false;
   var fetchedCurrentSchedule = false;
+  var scheduleFetchCalls = 0;
   String? requestedSemesterId;
   String? requestedSemesterName;
   DateTime? requestedSemesterStart;
@@ -200,6 +217,8 @@ class WidgetFakeScheduleService extends NjuScheduleService {
     required DateTime semesterEnd,
     bool includeFinalExams = true,
   }) async {
+    scheduleFetchCalls += 1;
+    if (scheduleError case final error?) throw error;
     fetchedSchedule = true;
     requestedSemesterId = semesterId;
     requestedSemesterName = semesterName;
@@ -214,6 +233,8 @@ class WidgetFakeScheduleService extends NjuScheduleService {
     SessionInfo session, {
     bool includeFinalExams = true,
   }) async {
+    scheduleFetchCalls += 1;
+    if (scheduleError case final error?) throw error;
     fetchedCurrentSchedule = true;
     requestedIncludeFinalExams = includeFinalExams;
     return currentBundle;
@@ -222,18 +243,28 @@ class WidgetFakeScheduleService extends NjuScheduleService {
 
 class WidgetFakeCalendarSyncService extends CalendarSyncService {
   WidgetFakeCalendarSyncService({
-    this.calendars = const [],
+    this.calendars = const [
+      Calendar(id: 'default-calendar', name: '个人日历', readOnly: false),
+    ],
     this.deletedCount = 3,
+    this.listError,
   });
 
   final List<Calendar> calendars;
   final int deletedCount;
+  final Object? listError;
   var deleteCalls = 0;
   String? deletedCalendarId;
   ScheduleBundle? deletedBundle;
 
+  var listWritableCalendarsCalls = 0;
+
   @override
-  Future<List<Calendar>> listWritableCalendars() async => calendars;
+  Future<List<Calendar>> listWritableCalendars() async {
+    listWritableCalendarsCalls += 1;
+    if (listError case final error?) throw error;
+    return calendars;
+  }
 
   @override
   Future<int> deleteGeneratedEventsForBundle({
@@ -458,7 +489,7 @@ Future<WebLoginPage> _startBackgroundLogin(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('拉取学期信息'));
+  await tester.tap(find.text('登录'));
   await tester.pump();
   return tester.widget<WebLoginPage>(find.byType(WebLoginPage));
 }
@@ -567,7 +598,7 @@ void main() {
 
       expect(scheduleService.fetchedOptions, isTrue);
       expect(scheduleService.fetchedSchedule, isFalse);
-      expect(find.text('课表学期'), findsOneWidget);
+      expect(find.text('课表学期'), findsNothing);
       expect(find.text('2025-2026学年 第2学期'), findsOneWidget);
       expect(find.text('拉取所选学期课表'), findsOneWidget);
       expect(find.text('系统日历同步'), findsNothing);
@@ -631,7 +662,7 @@ void main() {
 
       expect(scheduleService.optionFetchCalls, 2);
       expect(find.byType(WebLoginPage), findsNothing);
-      expect(find.text('课表学期'), findsOneWidget);
+      expect(find.text('课表学期'), findsNothing);
     },
   );
 
@@ -662,13 +693,137 @@ void main() {
 
       expect(scheduleService.fetchedSchedule, isTrue);
       expect(scheduleService.requestedSemesterId, '2025-2026-2');
-      expect(find.text('系统日历同步'), findsOneWidget);
+      expect(find.text('系统日历同步'), findsNothing);
       expect(find.text('已获取 2025-2026学年 第2学期'), findsOneWidget);
       expect(find.text('课程 1 门 · 考试 0 场 · 可导入 1 条'), findsOneWidget);
       expect(find.text('删除当前学期导入日程'), findsOneWidget);
       expect(find.text('一键清空本应用导入事件'), findsNothing);
     },
   );
+
+  testWidgets(
+    'schedule fetch requests full calendar permission only after confirmation',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'privacy_policy_accepted_20260914': true,
+      });
+      final calendarPlatform = WidgetFakeCalendarPlatform(
+        permissionStatus: CalendarPermissionStatus.writeOnly,
+        requestedPermissionStatus: CalendarPermissionStatus.granted,
+      );
+      DeviceCalendarPlusPlatform.instance = calendarPlatform;
+      final scheduleService = WidgetFakeScheduleService(
+        options: _semesterOptions(),
+      );
+      final calendarSyncService = WidgetFakeCalendarSyncService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(
+            authService: WidgetFakeAuthService(
+              restoredSession: _undergradSession(),
+            ),
+            scheduleService: scheduleService,
+            calendarSyncService: calendarSyncService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(calendarPlatform.permissionCheckCalls, 0);
+      await tester.tap(find.text('拉取所选学期课表'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('需要完整日历权限'), findsOneWidget);
+      expect(calendarPlatform.permissionCheckCalls, 1);
+      expect(calendarPlatform.permissionRequestCalls, 0);
+      expect(scheduleService.scheduleFetchCalls, 0);
+      expect(calendarSyncService.listWritableCalendarsCalls, 0);
+
+      await tester.tap(find.widgetWithText(FilledButton, '确认'));
+      await tester.pumpAndSettle();
+
+      expect(calendarPlatform.permissionRequestCalls, 1);
+      expect(scheduleService.scheduleFetchCalls, 1);
+      expect(calendarSyncService.listWritableCalendarsCalls, 1);
+      expect(find.text('已获取 2025-2026学年 第2学期'), findsOneWidget);
+    },
+  );
+
+  testWidgets('denied full calendar permission blocks all loading', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_20260914': true,
+    });
+    final calendarPlatform = WidgetFakeCalendarPlatform(
+      permissionStatus: CalendarPermissionStatus.denied,
+      requestedPermissionStatus: CalendarPermissionStatus.denied,
+    );
+    DeviceCalendarPlusPlatform.instance = calendarPlatform;
+    final scheduleService = WidgetFakeScheduleService(
+      options: _semesterOptions(),
+    );
+    final calendarSyncService = WidgetFakeCalendarSyncService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          authService: WidgetFakeAuthService(
+            restoredSession: _undergradSession(),
+          ),
+          scheduleService: scheduleService,
+          calendarSyncService: calendarSyncService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('拉取所选学期课表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '确认'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('日历权限不足'), findsOneWidget);
+    expect(calendarPlatform.permissionRequestCalls, 1);
+    expect(scheduleService.scheduleFetchCalls, 0);
+    expect(calendarSyncService.listWritableCalendarsCalls, 0);
+  });
+
+  testWidgets('a schedule request failure blocks the combined result', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'privacy_policy_accepted_20260914': true,
+    });
+    final scheduleService = WidgetFakeScheduleService(
+      options: _semesterOptions(),
+      scheduleError: Exception('学校课表接口失败'),
+    );
+    final calendarSyncService = WidgetFakeCalendarSyncService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          authService: WidgetFakeAuthService(
+            restoredSession: _undergradSession(),
+          ),
+          scheduleService: scheduleService,
+          calendarSyncService: calendarSyncService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('拉取所选学期课表'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('拉取课表失败'), findsOneWidget);
+    expect(find.text('学校课表接口失败'), findsOneWidget);
+    expect(scheduleService.scheduleFetchCalls, 1);
+    expect(calendarSyncService.listWritableCalendarsCalls, 1);
+    expect(find.text('已获取 2025-2026学年 第2学期'), findsNothing);
+  });
 
   testWidgets(
     'undergrad current-semester fallback warns before fetching schedule',
@@ -761,7 +916,7 @@ void main() {
 
       expect(scheduleService.fetchedOptions, isFalse);
       expect(scheduleService.fetchedCurrentSchedule, isFalse);
-      expect(find.text('课表学期'), findsOneWidget);
+      expect(find.text('课表学期'), findsNothing);
       expect(find.text('拉取当前学期课表'), findsOneWidget);
       expect(find.text('系统日历同步'), findsNothing);
 
@@ -769,7 +924,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(scheduleService.fetchedCurrentSchedule, isTrue);
-      expect(find.text('系统日历同步'), findsOneWidget);
+      expect(find.text('系统日历同步'), findsNothing);
     },
   );
 
@@ -806,7 +961,7 @@ void main() {
     },
   );
 
-  testWidgets('current-semester delete prompts when no calendar is selected', (
+  testWidgets('empty writable calendar list blocks the schedule result', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -822,7 +977,9 @@ void main() {
           scheduleService: WidgetFakeScheduleService(
             options: _semesterOptions(),
           ),
-          calendarSyncService: WidgetFakeCalendarSyncService(),
+          calendarSyncService: WidgetFakeCalendarSyncService(
+            calendars: const [],
+          ),
         ),
       ),
     );
@@ -830,15 +987,10 @@ void main() {
 
     await tester.tap(find.text('拉取所选学期课表'));
     await tester.pumpAndSettle();
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
-    final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
-    await tester.drag(find.byType(ListView), const Offset(0, -500));
-    await tester.pumpAndSettle();
-    await tester.tap(deleteButton);
-    await tester.pumpAndSettle();
 
-    expect(find.text('请先选择一个系统日历。'), findsOneWidget);
+    expect(find.text('拉取课表失败'), findsOneWidget);
+    expect(find.text('当前设备没有可写入的日历。'), findsOneWidget);
+    expect(find.text('已获取 2025-2026学年 第2学期'), findsNothing);
   });
 
   testWidgets('current-semester delete confirms before calling service', (
@@ -872,12 +1024,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('加载手机日历'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '加载手机日历'));
-    await tester.pumpAndSettle();
+    expect(calendarSyncService.listWritableCalendarsCalls, 1);
 
     final deleteButton = find.widgetWithText(OutlinedButton, '删除当前学期导入日程');
-    await tester.ensureVisible(deleteButton);
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
     await tester.tap(deleteButton);
     await tester.pumpAndSettle();
 
@@ -963,7 +1114,7 @@ void main() {
 
     expect(authService.clearSessionCalls, 0);
     expect(authService.clearWebViewCookiesCalls, 0);
-    expect(find.text('课表学期'), findsOneWidget);
+    expect(find.text('课表学期'), findsNothing);
     expect(find.text('登录信息未变化，已保留当前登录态。'), findsOneWidget);
   });
 
@@ -1012,7 +1163,7 @@ void main() {
     WidgetTester tester,
   ) async {
     final backgroundPage = await _startBackgroundLogin(tester);
-    expect(find.text('拉取学期信息'), findsOneWidget);
+    expect(find.text('登录'), findsOneWidget);
     expect(find.byType(WebLoginPage), findsOneWidget);
     expect(backgroundPage.embedded, isTrue);
     expect(

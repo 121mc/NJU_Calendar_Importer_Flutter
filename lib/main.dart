@@ -141,7 +141,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+class _HomePageState extends State<HomePage> {
   static const _privacyAcceptedKey = 'privacy_policy_accepted_20260914';
 
   late final StorageService _storageService;
@@ -158,16 +158,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   SchoolType _schoolType = SchoolType.undergrad;
   String? _selectedCalendarId;
-  bool _overwritePreviousImports = true;
-
   bool _loggingIn = false;
   bool _loadingSemesters = false;
   bool _semesterOptionsLoaded = false;
   bool _loadingSchedule = false;
-  bool _loadingCalendars = false;
   bool _syncingCalendar = false;
   bool _deletingCurrentSemesterEvents = false;
-  bool _permissionCheckRunning = false;
   bool _privacyAccepted = false;
   bool _privacyReady = false;
   bool _privacyDialogShowing = false;
@@ -180,7 +176,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
 
     _storageService = StorageService();
     _settingsService = widget.settingsService ?? SettingsService();
@@ -192,19 +187,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeApp();
     });
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _privacyAccepted) {
-      _checkCalendarPermissionOnLaunch(silent: true);
-    }
   }
 
   Future<void> _initializeApp() async {
@@ -284,7 +266,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _bootstrapDone = true;
       await _bootstrap();
     }
-    await _checkCalendarPermissionOnLaunch();
   }
 
   Future<void> _showPrivacyConsentDialog() async {
@@ -409,62 +390,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     await _startBackgroundLogin(schoolType, clearSession: false);
-  }
-
-  Future<void> _checkCalendarPermissionOnLaunch({bool silent = false}) async {
-    if (!_privacyAccepted || _permissionCheckRunning) return;
-    _permissionCheckRunning = true;
-
-    try {
-      final status = await DeviceCalendar.instance.hasPermissions();
-
-      if (!mounted) return;
-
-      if (status == CalendarPermissionStatus.granted ||
-          status == CalendarPermissionStatus.writeOnly) {
-        return;
-      }
-
-      final requested = await DeviceCalendar.instance.requestPermissions();
-
-      if (!mounted) return;
-
-      if (requested == CalendarPermissionStatus.granted ||
-          requested == CalendarPermissionStatus.writeOnly) {
-        if (!silent) {
-          _showSnackBar('已获得系统日历权限。');
-        }
-        return;
-      }
-
-      if (!silent) {
-        await showDialog<void>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('需要日历权限'),
-            content: Text(
-              requested == CalendarPermissionStatus.restricted
-                  ? '当前设备策略限制了日历权限，无法使用系统日历同步功能。'
-                  : '你尚未授予日历权限。没有该权限，本应用无法读取手机日历或写入课表事件。\n\n请在系统设置中允许“日历”权限后再试。',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('知道了'),
-              ),
-            ],
-          ),
-        );
-      }
-    } on DeviceCalendarException catch (e) {
-      if (!mounted || silent) return;
-      _showSnackBar('日历权限检查失败：${e.message}');
-    } catch (e) {
-      if (!mounted || silent) return;
-      _showSnackBar('日历权限检查失败：$e');
-    } finally {
-      _permissionCheckRunning = false;
-    }
   }
 
   Future<void> _openWebLogin() async {
@@ -696,28 +621,47 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
+    if (!await _ensureFullCalendarPermission()) return;
+    if (!mounted) return;
+
+    final previousCalendarId = _selectedCalendarId;
     setState(() {
       _loadingSchedule = true;
+      _bundle = null;
     });
+
     try {
-      final bundle = session.schoolType == SchoolType.undergrad
-          ? await _scheduleService.fetchUndergradScheduleForSemester(
-              session,
-              semesterId: selectedSemester!.id,
-              semesterName: selectedSemester.name,
-              semesterStart: selectedSemester.start,
-              semesterEnd: selectedSemester.end,
-              includeFinalExams: true,
-            )
-          : await _scheduleService.fetchCurrentSemesterSchedule(
-              session,
-              includeFinalExams: true,
-            );
+      final Future<ScheduleBundle> scheduleFuture =
+          session.schoolType == SchoolType.undergrad
+              ? _scheduleService.fetchUndergradScheduleForSemester(
+                  session,
+                  semesterId: selectedSemester!.id,
+                  semesterName: selectedSemester.name,
+                  semesterStart: selectedSemester.start,
+                  semesterEnd: selectedSemester.end,
+                  includeFinalExams: true,
+                )
+              : _scheduleService.fetchCurrentSemesterSchedule(
+                  session,
+                  includeFinalExams: true,
+                );
+      final results = await Future.wait<Object>(
+        [
+          _calendarSyncService.listWritableCalendars(),
+          scheduleFuture,
+        ],
+        eagerError: true,
+      );
       if (!mounted) return;
+
+      final calendars = results[0] as List<Calendar>;
+      final bundle = results[1] as ScheduleBundle;
+      if (calendars.isEmpty) {
+        throw Exception('当前设备没有可写入的日历。');
+      }
 
       if (bundle.events.isEmpty) {
         setState(() {
-          _bundle = null;
           _loadingSchedule = false;
         });
         await _showEmptyScheduleDialog(bundle.semesterName);
@@ -726,11 +670,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
       setState(() {
         _bundle = bundle;
+        _calendars = calendars;
+        _selectedCalendarId = calendars.any(
+          (calendar) => calendar.id == previousCalendarId,
+        )
+            ? previousCalendarId
+            : calendars.first.id;
       });
       _showSnackBar('已自动获取 ${bundle.events.length} 条日历事件。');
     } catch (e) {
       if (!mounted) return;
-      _showSnackBar('自动获取课表失败：$e');
+      setState(() {
+        _loadingSchedule = false;
+      });
+      await _showMessageDialog(
+        title: '拉取课表失败',
+        message: _readableError(e),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -760,34 +716,85 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _loadCalendars() async {
-    setState(() {
-      _loadingCalendars = true;
-    });
+  Future<bool> _ensureFullCalendarPermission() async {
     try {
-      final calendars = await _calendarSyncService.listWritableCalendars();
-      if (!mounted) return;
+      final current = await DeviceCalendar.instance.hasPermissions();
+      if (!mounted) return false;
+      if (current == CalendarPermissionStatus.granted) return true;
 
-      setState(() {
-        _calendars = calendars;
-        _selectedCalendarId = calendars.isEmpty
-            ? null
-            : (_selectedCalendarId ?? calendars.first.id);
-      });
+      final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('需要完整日历权限'),
+              content: const Text(
+                '拉取课表前需要获取系统日历的完整访问权限，'
+                '用于加载日历、覆盖旧日程并写入新课表。\n\n'
+                '点击确认后，系统将显示日历权限申请。',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('确认'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed || !mounted) return false;
 
-      if (calendars.isEmpty) {
-        _showSnackBar('当前设备没有可写入的日历。');
-      }
+      final requested = await DeviceCalendar.instance.requestPermissions();
+      if (!mounted) return false;
+      if (requested == CalendarPermissionStatus.granted) return true;
+
+      final detail = requested == CalendarPermissionStatus.restricted
+          ? '当前设备策略限制了日历权限。'
+          : requested == CalendarPermissionStatus.writeOnly
+              ? '当前只有写入权限，无法读取和覆盖旧日程。'
+              : '未获得系统日历的完整访问权限。';
+      await _showMessageDialog(
+        title: '日历权限不足',
+        message: '$detail\n\n请在系统设置中允许完整日历权限后重试。',
+      );
+      return false;
     } catch (e) {
-      if (!mounted) return;
-      _showSnackBar('加载系统日历失败：$e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingCalendars = false;
-        });
-      }
+      if (!mounted) return false;
+      await _showMessageDialog(
+        title: '日历权限检查失败',
+        message: _readableError(e),
+      );
+      return false;
     }
+  }
+
+  Future<void> _showMessageDialog({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _readableError(Object error) {
+    final message = '$error';
+    return message.startsWith('Exception: ')
+        ? message.substring('Exception: '.length)
+        : message;
   }
 
   Future<void> _syncToCalendar() async {
@@ -807,7 +814,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final result = await _calendarSyncService.syncEvents(
         calendarId: _selectedCalendarId!,
         bundle: _bundle!,
-        overwritePreviousImports: _overwritePreviousImports,
+        overwritePreviousImports: true,
       );
 
       if (!mounted) return;
@@ -1010,25 +1017,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            OutlinedButton.icon(
-              onPressed: _loggingIn ? null : _openSettingsDialog,
-              icon: const Icon(Icons.manage_accounts_outlined),
-              label: const Text('配置登录信息'),
+            Expanded(
+              flex: 5,
+              child: OutlinedButton.icon(
+                onPressed: _loggingIn ? null : _openSettingsDialog,
+                icon: const Icon(Icons.manage_accounts_outlined),
+                label: const Text('配置登录信息'),
+              ),
             ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _loggingIn ? null : _openWebLogin,
-              icon: _loggingIn
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_download_outlined),
-              label: const Text('拉取学期信息'),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 3,
+              child: FilledButton.icon(
+                onPressed: _loggingIn ? null : _openWebLogin,
+                icon: _loggingIn
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_download_outlined),
+                label: const Text('登录'),
+              ),
             ),
           ],
         ),
@@ -1046,12 +1058,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '课表学期',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
             if (!isUndergrad) ...[
-              const SizedBox(height: 12),
               const Text('研究生课表系统将在拉取时自动确定当前学期。'),
               const SizedBox(height: 12),
               FilledButton.icon(
@@ -1067,14 +1074,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ],
             if (isUndergrad && _loadingSemesters) ...[
-              const SizedBox(height: 12),
               const LinearProgressIndicator(),
             ],
             if (isUndergrad &&
                 !_loadingSemesters &&
                 _semesterOptionsLoaded &&
                 !hasSemesterOptions) ...[
-              const SizedBox(height: 12),
               const Text('未获取到可选择的本科课表学期。'),
               const SizedBox(height: 12),
               OutlinedButton.icon(
@@ -1084,7 +1089,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ],
             if (isUndergrad && hasSemesterOptions) ...[
-              const SizedBox(height: 12),
               DropdownButtonFormField<NjuSemester>(
                 initialValue: _selectedSemester,
                 isExpanded: true,
@@ -1137,11 +1141,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '系统日历同步',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
             Text(
               '已获取 ${_bundle!.semesterName}',
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -1151,24 +1150,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               '课程 ${_bundle!.courseCount} 门 · '
               '考试 ${_bundle!.examCount} 场 · '
               '可导入 ${_bundle!.events.length} 条',
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _loadingCalendars ? null : _loadCalendars,
-                    icon: _loadingCalendars
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.calendar_month),
-                    label: const Text('加载手机日历'),
-                  ),
-                ),
-              ],
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
@@ -1195,18 +1176,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     },
             ),
             const SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _overwritePreviousImports,
-              onChanged: (value) {
-                setState(() {
-                  _overwritePreviousImports = value;
-                });
-              },
-              title: const Text('覆盖删除本应用此前导入的旧事件'),
-              subtitle: const Text('依赖读取权限；若只有写入权限则无法删除旧数据。'),
-            ),
-            const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(

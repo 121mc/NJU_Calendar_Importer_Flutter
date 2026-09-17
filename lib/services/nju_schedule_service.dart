@@ -234,16 +234,46 @@ class NjuScheduleService {
     required String studentId,
     required bool includeFinalExams,
   }) async {
-    final holidays = await _holidayService.fetch(semesterId);
-    final coursesResp = await dio.post<dynamic>(
-      'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
-      data: {
-        'XNXQDM': semesterId,
-        'pageSize': '9999',
-        'pageNumber': '1',
-      },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
+    final responses = await Future.wait<Object?>(
+      [
+        _holidayService.fetch(semesterId),
+        dio.post<dynamic>(
+          'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxszhxqkb.do',
+          data: {
+            'XNXQDM': semesterId,
+            'pageSize': '9999',
+            'pageNumber': '1',
+          },
+          options: Options(contentType: Headers.formUrlEncodedContentType),
+        ),
+        dio.post<dynamic>(
+          'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxskclb.do',
+          data: {
+            'XNXQDM': semesterId,
+            'pageSize': '9999',
+            'pageNumber': '1',
+          },
+          options: Options(contentType: Headers.formUrlEncodedContentType),
+        ),
+        if (includeFinalExams)
+          dio.post<dynamic>(
+            'https://ehallapp.nju.edu.cn/jwapp/sys/studentWdksapApp/WdksapController/cxxsksap.do',
+            data: {
+              'requestParamStr': jsonEncode({
+                'XNXQDM': semesterId,
+                '*order': '-KSRQ,-KSSJMS',
+              }),
+            },
+            options: Options(contentType: Headers.formUrlEncodedContentType),
+          )
+        else
+          Future<Object?>.value(),
+      ],
+      eagerError: true,
     );
+
+    final holidays = responses[0] as List<HolidayRule>;
+    final coursesResp = responses[1] as Response<dynamic>;
     final coursesData = _ensureJsonMap(
       coursesResp.data,
       apiName: '本科-课表接口',
@@ -255,15 +285,7 @@ class NjuScheduleService {
 
     // “其他信息” belongs to the course-list model used by the visible table,
     // not to the structured weekly-schedule model above.
-    final courseListResp = await dio.post<dynamic>(
-      'https://ehallapp.nju.edu.cn/jwapp/sys/wdkb/modules/xskcb/cxxskclb.do',
-      data: {
-        'XNXQDM': semesterId,
-        'pageSize': '9999',
-        'pageNumber': '1',
-      },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
-    );
+    final courseListResp = responses[2] as Response<dynamic>;
     final courseListData = _ensureJsonMap(
       courseListResp.data,
       apiName: '本科-课程列表接口',
@@ -275,16 +297,7 @@ class NjuScheduleService {
 
     var examRows = <Map<String, dynamic>>[];
     if (includeFinalExams) {
-      final examsResp = await dio.post<dynamic>(
-        'https://ehallapp.nju.edu.cn/jwapp/sys/studentWdksapApp/WdksapController/cxxsksap.do',
-        data: {
-          'requestParamStr': jsonEncode({
-            'XNXQDM': semesterId,
-            '*order': '-KSRQ,-KSSJMS',
-          }),
-        },
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
+      final examsResp = responses[3] as Response<dynamic>;
       final examsData = _ensureJsonMap(
         examsResp.data,
         apiName: '本科-考试接口',
@@ -451,17 +464,24 @@ class NjuScheduleService {
     final currentSemester = eligible.last;
     final semesterId = '${currentSemester['XNXQDM']}';
     final semesterName = '${currentSemester['XNXQDM_DISPLAY'] ?? semesterId}';
-    final holidays = await _holidayService.fetch(semesterId);
     final rawSemesterAnchor = _parseDateTime('${currentSemester['KBKFRQ']}');
     // 研究生接口中的 KBKFRQ 更像“课表开放/锚点日期”，不一定正好是周一。
     // 先归一化到该周周一，再叠加 XQ(周几) 与 ZCBH(周次)，避免整体 weekday 固定偏移。
     final semesterStart = _normalizeWeekAnchorToMonday(rawSemesterAnchor);
 
-    final coursesResp = await dio.post<dynamic>(
-      'https://ehallapp.nju.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/xspkjgcx.do',
-      data: {'XNXQDM': semesterId, 'XH': ''},
-      options: Options(contentType: Headers.formUrlEncodedContentType),
+    final responses = await Future.wait<Object>(
+      [
+        _holidayService.fetch(semesterId),
+        dio.post<dynamic>(
+          'https://ehallapp.nju.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/xspkjgcx.do',
+          data: {'XNXQDM': semesterId, 'XH': ''},
+          options: Options(contentType: Headers.formUrlEncodedContentType),
+        ),
+      ],
+      eagerError: true,
     );
+    final holidays = responses[0] as List<HolidayRule>;
+    final coursesResp = responses[1] as Response<dynamic>;
     final coursesData = _ensureJsonMap(
       coursesResp.data,
       apiName: '研究生-排课结果接口',
