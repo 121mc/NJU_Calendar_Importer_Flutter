@@ -607,14 +607,20 @@ void main() {
         ),
       );
       await tester.pump();
-      for (var i = 0;
-          i < 20 && find.byKey(const Key('fake-webview')).evaluate().isEmpty;
-          i++) {
-        await tester.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 20 && authService.clearSessionCalls == 0; i++) {
+        await tester.pump();
       }
 
       expect(scheduleService.optionFetchCalls, 1);
       expect(authService.clearSessionCalls, 1);
+      expect(authService.clearWebViewCookiesCalls, 1);
+      expect(find.byType(WebLoginPage), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 499));
+      expect(find.byType(WebLoginPage), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
       expect(find.byType(WebLoginPage), findsOneWidget);
 
       final backgroundPage = tester.widget<WebLoginPage>(

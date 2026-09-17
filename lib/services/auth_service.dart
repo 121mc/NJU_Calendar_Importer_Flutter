@@ -30,6 +30,16 @@ class AuthService {
     await cookieManager.clearCookies();
   }
 
+  /// Removes every persisted login artifact before starting a fresh login.
+  ///
+  /// Dio uses an in-memory cookie jar for each request, so the secure session
+  /// storage and WebView cookies are the complete persisted authentication
+  /// cache.
+  Future<void> clearLoginCache() async {
+    await clearSession();
+    await clearWebViewCookies();
+  }
+
   String _appIndexUrlFor(SchoolType schoolType) {
     switch (schoolType) {
       case SchoolType.undergrad:

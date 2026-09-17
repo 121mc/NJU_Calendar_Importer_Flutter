@@ -404,7 +404,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     _showSnackBar('登录状态已失效，正在自动重新登录…');
-    await _startBackgroundLogin(schoolType);
+    await _authService.clearLoginCache();
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+
+    await _startBackgroundLogin(schoolType, clearSession: false);
   }
 
   Future<void> _checkCalendarPermissionOnLaunch({bool silent = false}) async {
@@ -487,8 +491,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _startBackgroundLogin(schoolType);
   }
 
-  Future<void> _startBackgroundLogin(SchoolType schoolType) async {
-    await _authService.clearSession();
+  Future<void> _startBackgroundLogin(
+    SchoolType schoolType, {
+    bool clearSession = true,
+  }) async {
+    if (clearSession) {
+      await _authService.clearSession();
+    }
     if (!mounted) return;
     setState(() {
       _schoolType = schoolType;
