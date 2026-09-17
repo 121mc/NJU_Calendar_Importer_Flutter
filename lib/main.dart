@@ -142,7 +142,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const _privacyAcceptedKey = 'privacy_policy_accepted_20260914';
+  static const _privacyAcceptedKey = 'privacy_policy_accepted_20260917';
 
   late final StorageService _storageService;
   late final AuthService _authService;
@@ -281,7 +281,7 @@ class _HomePageState extends State<HomePage> {
               content: const SingleChildScrollView(
                 child: Text(
                   '欢迎使用“呢喃课表导入”。\n\n'
-                  '我们于2026年9月14日更新了隐私政策。\n\n'
+                  '我们于2026年9月17日更新了隐私政策。\n\n'
                   '请阅读并同意新版《隐私政策》后继续使用。本应用不会将你的账号、验证码、课表内容或日历数据上传到开发者自建服务器。',
                 ),
               ),
