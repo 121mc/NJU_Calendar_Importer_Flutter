@@ -6,6 +6,8 @@
 .packages
 .pub/
 build/
+.build/
+**/.swiftpm/xcode/xcuserdata/
 .worktrees/
 .idea/
 .vscode/
